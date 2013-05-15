@@ -6,7 +6,7 @@
 %%% @end
 %%% Created :  4 Apr 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%-------------------------------------------------------------------
-{application, mysql,
+{application, p1_mysql,
  [{description,  "MySQL driver"},
   {vsn,          "0.1.0"},
   {modules,      []},
