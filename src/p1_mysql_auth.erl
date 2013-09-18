@@ -1,20 +1,20 @@
 %%%-------------------------------------------------------------------
-%%% File    : mysql_auth.erl
+%%% File    : p1_mysql_auth.erl
 %%% Author  : Fredrik Thulin <ft@it.su.se>
 %%% Descrip.: MySQL client authentication functions.
 %%% Created :  4 Aug 2005 by Fredrik Thulin <ft@it.su.se>
 %%%
 %%% Note    : All MySQL code was written by Magnus Ahltorp, originally
-%%%           in the file mysql.erl - I just moved it here.
+%%%           in the file p1_mysql.erl - I just moved it here.
 %%%
 %%% Copyright (c) 2001-2004 Kungliga Tekniska Högskolan
 %%% See the file COPYING
 %%%
 %%%-------------------------------------------------------------------
--module(mysql_auth).
+-module(p1_mysql_auth).
 
 %%--------------------------------------------------------------------
-%% External exports (should only be used by the 'mysql_conn' module)
+%% External exports (should only be used by the 'p1_mysql_conn' module)
 %%--------------------------------------------------------------------
 -export([
 	 do_old_auth/7,
@@ -49,13 +49,13 @@
 %%           Salt1    = string(), salt 1 from server greeting
 %%           LogFun   = undefined | function() of arity 3
 %% Descrip.: Perform old-style MySQL authentication.
-%% Returns : result of mysql_conn:do_recv/3
+%% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
 do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
     Auth = password_old(Password, Salt1),
     Packet2 = make_auth(User, Auth),
     do_send(Sock, Packet2, SeqNum, LogFun),
-    mysql_conn:do_recv(LogFun, RecvPid, SeqNum).
+    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum).
 
 %%--------------------------------------------------------------------
 %% Function: do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1,
@@ -69,19 +69,19 @@ do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
 %%           Salt2    = string(), salt 2 from server greeting
 %%           LogFun   = undefined | function() of arity 3
 %% Descrip.: Perform MySQL authentication.
-%% Returns : result of mysql_conn:do_recv/3
+%% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
 do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, LogFun) ->
     Auth = password_new(Password, Salt1 ++ Salt2),
     Packet2 = make_new_auth(User, Auth, none),
     do_send(Sock, Packet2, SeqNum, LogFun),
-    case mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
+    case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
 	{ok, Packet3, SeqNum2} ->
 	    case Packet3 of
 		<<254:8>> ->
 		    AuthOld = password_old(Password, Salt1),
 		    do_send(Sock, <<AuthOld/binary, 0:8>>, SeqNum2 + 1, LogFun),
-		    mysql_conn:do_recv(LogFun, RecvPid, SeqNum2 + 1);
+		    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum2 + 1);
 		_ ->
 		    {ok, Packet3, SeqNum2}
 	    end;
@@ -187,6 +187,6 @@ password_new(Password, Salt) ->
 
 
 do_send(Sock, Packet, Num, LogFun) ->
-    mysql:log(LogFun, debug, "mysql_auth send packet ~p: ~p", [Num, Packet]),
+    p1_mysql:log(LogFun, debug, "p1_mysql_auth send packet ~p: ~p", [Num, Packet]),
     Data = <<(size(Packet)):24/little, Num:8, Packet/binary>>,
     gen_tcp:send(Sock, Data).

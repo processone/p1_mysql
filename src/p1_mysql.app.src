@@ -12,7 +12,7 @@
   {modules,      []},
   {registered,   []},
   {applications, [kernel, stdlib]},
-  {mod,          {mysql_app,[]}}]}.
+  {mod,          {p1_mysql_app,[]}}]}.
 
 %% Local Variables:
 %% mode: erlang

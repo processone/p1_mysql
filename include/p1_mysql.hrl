@@ -1,5 +1,5 @@
 %% MySQL result record:
--record(mysql_result,
+-record(p1_mysql_result,
 	{fieldinfo=[],
 	 rows=[],
 	 affectedrows=0,

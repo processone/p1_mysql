@@ -1,5 +1,5 @@
 %%%-------------------------------------------------------------------
-%%% File    : mysql_conn.erl
+%%% File    : p1_mysql_conn.erl
 %%% Author  : Fredrik Thulin <ft@it.su.se>
 %%% Descrip.: MySQL connection handler, handles de-framing of messages
 %%%           received by the MySQL receiver process.
@@ -7,20 +7,20 @@
 %%% Modified: 11 Jan 2006 by Mickael Remond <mickael.remond@process-one.net>
 %%%
 %%% Note    : All MySQL code was written by Magnus Ahltorp, originally
-%%%           in the file mysql.erl - I just moved it here.
+%%%           in the file p1_mysql.erl - I just moved it here.
 %%%
 %%% Copyright (c) 2001-2004 Kungliga Tekniska Högskolan
 %%% See the file COPYING
 %%%
 %%%
 %%% This module handles a single connection to a single MySQL server.
-%%% You can use it stand-alone, or through the 'mysql' module if you
+%%% You can use it stand-alone, or through the 'p1_mysql' module if you
 %%% want to have more than one connection to the server, or
 %%% connections to different servers.
 %%%
 %%% To use it stand-alone, set up the connection with
 %%%
-%%%   {ok, Pid} = mysql_conn:start(Host, Port, User, Password,
+%%%   {ok, Pid} = p1_mysql_conn:start(Host, Port, User, Password,
 %%%                                Database, LogFun)
 %%%
 %%%         Host     = string()
@@ -36,29 +36,29 @@
 %%%
 %%% and then make MySQL querys with
 %%%
-%%%   Result = mysql_conn:fetch(Pid, Query, self())
+%%%   Result = p1_mysql_conn:fetch(Pid, Query, self())
 %%%
 %%%         Result = {data, MySQLRes}    |
 %%%                  {updated, MySQLRes} |
 %%%                  {error, MySQLRes}
-%%%          Where: MySQLRes = #mysql_result
+%%%          Where: MySQLRes = #p1_mysql_result
 %%%
 %%% Actual data can be extracted from MySQLRes by calling the following API
 %%% functions:
 %%%     - on data received:
-%%%          FieldInfo = mysql:get_result_field_info(MysqlRes)
-%%%          AllRows   = mysql:get_result_rows(MysqlRes)
+%%%          FieldInfo = p1_mysql:get_result_field_info(MysqlRes)
+%%%          AllRows   = p1_mysql:get_result_rows(MysqlRes)
 %%%         with FieldInfo = list() of {Table, Field, Length, Name}
 %%%          and AllRows = list() of list() representing records
 %%%     - on update:
-%%%          Affected= mysql:get_result_affected_rows(MysqlRes)
+%%%          Affected= p1_mysql:get_result_affected_rows(MysqlRes)
 %%%         with Affected = integer()
 %%%     - on error:
-%%%          Reason    = mysql:get_result_reason(MysqlRes)
+%%%          Reason    = p1_mysql:get_result_reason(MysqlRes)
 %%%         with Reason = string()
 %%%-------------------------------------------------------------------
 
--module(mysql_conn).
+-module(p1_mysql_conn).
 
 %%--------------------------------------------------------------------
 %% External exports
@@ -72,12 +72,12 @@
 	]).
 
 %%--------------------------------------------------------------------
-%% External exports (should only be used by the 'mysql_auth' module)
+%% External exports (should only be used by the 'p1_mysql_auth' module)
 %%--------------------------------------------------------------------
 -export([do_recv/3
 	]).
 
--include("mysql.hrl").
+-include("p1_mysql.hrl").
 -record(state, {
 	  mysql_version,
 	  log_fun,
@@ -106,7 +106,7 @@
 %%           Password = string()
 %%           Database = string()
 %%           LogFun   = undefined | function() of arity 3
-%% Descrip.: Starts a mysql_conn process that connects to a MySQL
+%% Descrip.: Starts a p1_mysql_conn process that connects to a MySQL
 %%           server, logs in and chooses a database.
 %% Returns : {ok, Pid} | {error, Reason}
 %%           Pid    = pid()
@@ -144,19 +144,19 @@ post_start(Pid, _LogFun) ->
     %%TODO find a way to get configured Options here
     Timeout= ?DEFAULT_STANDALONE_TIMEOUT,
     receive
-	{mysql_conn, Pid, ok} ->
+	{p1_mysql_conn, Pid, ok} ->
 	    {ok, Pid};
-	{mysql_conn, Pid, {error, Reason}} ->
-	    mysql:log(_LogFun, error, "mysql_conn: post_start error ~p~n",
+	{p1_mysql_conn, Pid, {error, Reason}} ->
+	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: post_start error ~p~n",
 		      [Reason]),
 	    stop(Pid),
 	    {error, Reason}
 %	Unknown ->
-%	    mysql:log(_LogFun, error, "mysql_conn: Received unknown signal, exiting"),
-%	    mysql:log(_LogFun, debug, "mysql_conn: Unknown signal : ~p", [Unknown]),
+%	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: Received unknown signal, exiting"),
+%	    p1_mysql:log(_LogFun, debug, "p1_mysql_conn: Unknown signal : ~p", [Unknown]),
 %	    {error, "unknown signal received"}
     after Timeout ->
-	    mysql:log(_LogFun, error, "mysql_conn: post_start timeout~n",
+	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: post_start timeout~n",
 		      []),
 	    stop(Pid),
 	    {error, "timed out"}
@@ -165,7 +165,7 @@ post_start(Pid, _LogFun) ->
 %%--------------------------------------------------------------------
 %% Function: fetch(Pid, Query, From)
 %%           fetch(Pid, Query, From, Timeout)
-%%           Pid     = pid(), mysql_conn to send fetch-request to
+%%           Pid     = pid(), p1_mysql_conn to send fetch-request to
 %%           Query   = string(), MySQL query in verbatim
 %%           From    = pid() or term(), use a From of self() when
 %%                     using this module for a single connection,
@@ -177,9 +177,9 @@ post_start(Pid, _LogFun) ->
 %%           alone (From = self()), but don't block the caller if we
 %%           are not running stand-alone (From = gen_server From).
 %% Returns : ok                        | (non-stand-alone mode)
-%%           {data, #mysql_result}     | (stand-alone mode)
-%%           {updated, #mysql_result}  | (stand-alone mode)
-%%           {error, #mysql_result}      (stand-alone mode)
+%%           {data, #p1_mysql_result}     | (stand-alone mode)
+%%           {updated, #p1_mysql_result}  | (stand-alone mode)
+%%           {error, #p1_mysql_result}      (stand-alone mode)
 %%           FieldInfo = term()
 %%           Rows      = list() of [string()]
 %%           Reason    = term()
@@ -234,7 +234,7 @@ stop(Pid) ->
 %%--------------------------------------------------------------------
 %% Function: do_recv(LogFun, RecvPid, SeqNum)
 %%           LogFun  = undefined | function() with arity 3
-%%           RecvPid = pid(), mysql_recv process
+%%           RecvPid = pid(), p1_mysql_recv process
 %%           SeqNum  = undefined | integer()
 %% Descrip.: Wait for a frame decoded and sent to us by RecvPid.
 %%           Either wait for a specific frame if SeqNum is an integer,
@@ -243,34 +243,34 @@ stop(Pid) ->
 %%           {error, Reason}
 %%           Reason = term()
 %%
-%% Note    : Only to be used externally by the 'mysql_auth' module.
+%% Note    : Only to be used externally by the 'p1_mysql_auth' module.
 %%--------------------------------------------------------------------
 do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 				      LogFun == undefined,
 				      SeqNum == undefined ->
     receive
-        {mysql_recv, RecvPid, data, Packet, Num} ->
-            %%mysql:log(LogFun, debug, "mysql_conn: recv packet ~p:
+        {p1_mysql_recv, RecvPid, data, Packet, Num} ->
+            %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: recv packet ~p:
             %%~p", [Num, Packet]),
 	    {ok, Packet, Num};
-	{mysql_recv, RecvPid, closed, _E} ->
-	    mysql:log(LogFun, error, "mysql_conn: mysql_recv:"
+	{p1_mysql_recv, RecvPid, closed, _E} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
 		      " socket was closed ~p~n", [{RecvPid, _E}]),
-	    {error, "mysql_recv: socket was closed"}
+	    {error, "p1_mysql_recv: socket was closed"}
     end;
 do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 				      LogFun == undefined,
 				      is_integer(SeqNum) ->
     ResponseNum = SeqNum + 1,
     receive
-        {mysql_recv, RecvPid, data, Packet, ResponseNum} ->
-            %%mysql:log(LogFun, debug, "mysql_conn: recv packet ~p:
+        {p1_mysql_recv, RecvPid, data, Packet, ResponseNum} ->
+            %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: recv packet ~p:
             %%~p", [ResponseNum, Packet]),
 	    {ok, Packet, ResponseNum};
-	{mysql_recv, RecvPid, closed, _E} ->
-	    mysql:log(LogFun, error, "mysql_conn: mysql_recv:"
+	{p1_mysql_recv, RecvPid, closed, _E} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
 		      " socket was closed 2 ~p~n", [{RecvPid, _E}]),
-	    {error, "mysql_recv: socket was closed"}
+	    {error, "p1_mysql_recv: socket was closed"}
         end.
 
 
@@ -287,31 +287,31 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           Password = string()
 %%           Database = string()
 %%           LogFun   = undefined | function() of arity 3
-%%           Parent   = pid() of process starting this mysql_conn
+%%           Parent   = pid() of process starting this p1_mysql_conn
 %% Descrip.: Connect to a MySQL server, log in and chooses a database.
 %%           Report result of this to Parent, and then enter loop() if
 %%           we were successfull.
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
 init(Host, Port, User, Password, Database, LogFun, Parent) ->
-    case mysql_recv:start_link(Host, Port, LogFun, self()) of
+    case p1_mysql_recv:start_link(Host, Port, LogFun, self()) of
 	{ok, RecvPid, Sock} ->
 	    case mysql_init(Sock, RecvPid, User, Password, LogFun) of
 		{ok, Version} ->
 		    case do_query(Sock, RecvPid, LogFun, "use " ++ Database,
 				  Version, [{result_type, binary}]) of
 			{error, MySQLRes} ->
-			    mysql:log(LogFun, error,
-				      "mysql_conn: Failed changing"
+			    p1_mysql:log(LogFun, error,
+				      "p1_mysql_conn: Failed changing"
 				      " to database ~p : ~p",
 				      [Database,
-				       mysql:get_result_reason(MySQLRes)]),
+				       p1_mysql:get_result_reason(MySQLRes)]),
 			    gen_tcp:close(Sock),
-			    Parent ! {mysql_conn, self(),
+			    Parent ! {p1_mysql_conn, self(),
 				      {error, failed_changing_database}};
 			%% ResultType: data | updated
 			{_ResultType, _MySQLRes} ->
-			    Parent ! {mysql_conn, self(), ok},
+			    Parent ! {p1_mysql_conn, self(), ok},
 			    State = #state{mysql_version=Version,
 					   recv_pid = RecvPid,
 					   socket   = Sock,
@@ -321,13 +321,13 @@ init(Host, Port, User, Password, Database, LogFun, Parent) ->
 			    loop(State)
 		    end;
 		{error, _Reason} ->
-		    Parent ! {mysql_conn, self(), {error, login_failed}}
+		    Parent ! {p1_mysql_conn, self(), {error, login_failed}}
 	    end;
 	E ->
-	    mysql:log(LogFun, error, "mysql_conn: "
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 		      "Failed connecting to ~p:~p : ~p",
 		      [Host, Port, E]),
-	    Parent ! {mysql_conn, self(), {error, connect_failed}}
+	    Parent ! {p1_mysql_conn, self(), {error, connect_failed}}
     end.
 
 %%--------------------------------------------------------------------
@@ -356,20 +356,20 @@ loop(State) ->
 		    gen_server:reply(GenSrvFrom, Res)
 	    end,
 	    loop(State);
-	{mysql_recv, RecvPid, data, Packet, Num} ->
-	    mysql:log(State#state.log_fun, error, "mysql_conn: "
+	{p1_mysql_recv, RecvPid, data, Packet, Num} ->
+	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Received MySQL data when not expecting any "
 		      "(num ~p) - ignoring it", [Num]),
-	    mysql:log(State#state.log_fun, error, "mysql_conn: "
+	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Unexpected MySQL data (num ~p) :~n~p",
 		      [Num, Packet]),
 	    loop(State);
 	close ->
-	    mysql:log(State#state.log_fun, error, "mysql_conn: "
+	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Received close signal, exiting.", []),
 	    close_connection(State);
         Unknown ->
-	    mysql:log(State#state.log_fun, error, "mysql_conn: "
+	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Received unknown signal, exiting : ~p",
 		      [Unknown]),
 	    close_connection(State),
@@ -379,7 +379,7 @@ loop(State) ->
 %%--------------------------------------------------------------------
 %% Function: mysql_init(Sock, RecvPid, User, Password, LogFun)
 %%           Sock     = term(), gen_tcp socket
-%%           RecvPid  = pid(), mysql_recv process
+%%           RecvPid  = pid(), p1_mysql_recv process
 %%           User     = string()
 %%           Password = string()
 %%           LogFun   = undefined | function() with arity 3
@@ -394,12 +394,12 @@ mysql_init(Sock, RecvPid, User, Password, LogFun) ->
 	    AuthRes =
 		case Caps band ?SECURE_CONNECTION of
 		    ?SECURE_CONNECTION ->
-			mysql_auth:do_new_auth(Sock, RecvPid,
+			p1_mysql_auth:do_new_auth(Sock, RecvPid,
 					       InitSeqNum + 1,
 					       User, Password,
 					       Salt1, Salt2, LogFun);
 		    _ ->
-			mysql_auth:do_old_auth(Sock, RecvPid,
+			p1_mysql_auth:do_old_auth(Sock, RecvPid,
 					       InitSeqNum + 1,
 					       User, Password,
 					       Salt1, LogFun)
@@ -408,17 +408,17 @@ mysql_init(Sock, RecvPid, User, Password, LogFun) ->
 		{ok, <<0:8, _Rest/binary>>, _RecvNum} ->
 		    {ok,Version};
 		{ok, <<255:8, Code:16/little, Message/binary>>, _RecvNum} ->
-		    mysql:log(LogFun, error, "mysql_conn: "
+		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 			      "init error ~p: ~p~n",
 			      [Code, binary_to_list(Message)]),
 		    {error, binary_to_list(Message)};
 		{ok, RecvPacket, _RecvNum} ->
-		    mysql:log(LogFun, error, "mysql_conn: "
+		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 			      "init unknown error ~p~n",
 			      [binary_to_list(RecvPacket)]),
 		    {error, binary_to_list(RecvPacket)};
 		{error, Reason} ->
-		    mysql:log(LogFun, error, "mysql_conn: "
+		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 			      "init failed receiving data : ~p~n",
 			      [Reason]),
 		    {error, Reason}
@@ -436,14 +436,14 @@ greeting(Packet, LogFun) ->
     <<Caps:16/little, Rest5/binary>> = Rest4,
     <<ServerChar:16/binary-unit:8, Rest6/binary>> = Rest5,
     {Salt2, _Rest7} = asciz(Rest6),
-    mysql:log(LogFun, debug, "mysql_conn: greeting version ~p (protocol ~p) "
+    p1_mysql:log(LogFun, debug, "p1_mysql_conn: greeting version ~p (protocol ~p) "
 	      "salt ~p caps ~p serverchar ~p salt2 ~p",
 	      [Version, Protocol, Salt, Caps, ServerChar, Salt2]),
     {normalize_version(Version, LogFun), Salt, Salt2, Caps}.
 
 %% part of greeting/2
 asciz(Data) when is_binary(Data) ->
-    mysql:asciz_binary(Data, []);
+    p1_mysql:asciz_binary(Data, []);
 asciz(Data) when is_list(Data) ->
     {String, [0 | Rest]} = lists:splitwith(fun (C) ->
 						   C /= 0
@@ -453,12 +453,12 @@ asciz(Data) when is_list(Data) ->
 %%--------------------------------------------------------------------
 %% Function: get_query_response(LogFun, RecvPid)
 %%           LogFun  = undefined | function() with arity 3
-%%           RecvPid = pid(), mysql_recv process
+%%           RecvPid = pid(), p1_mysql_recv process
 %%           Version = integer(), Representing MySQL version used
 %% Descrip.: Wait for frames until we have a complete query response.
-%% Returns :   {data, #mysql_result}
-%%             {updated, #mysql_result}
-%%             {error, #mysql_result}
+%% Returns :   {data, #p1_mysql_result}
+%%             {updated, #p1_mysql_result}
+%%             {error, #p1_mysql_result}
 %%           FieldInfo    = list() of term()
 %%           Rows         = list() of [string()]
 %%           AffectedRows = int()
@@ -471,10 +471,10 @@ get_query_response(LogFun, RecvPid, Version, Options) ->
 		0 ->
 		    %% No Tabular data
 		    <<AffectedRows:8, _Rest2/binary>> = Rest,
-		    {updated, #mysql_result{affectedrows=AffectedRows}};
+		    {updated, #p1_mysql_result{affectedrows=AffectedRows}};
 		255 ->
 		    <<_Code:16/little, Message/binary>>  = Rest,
-		    {error, #mysql_result{error=binary_to_list(Message)}};
+		    {error, #p1_mysql_result{error=binary_to_list(Message)}};
 		_ ->
 		    %% Tabular data received
                     ResultType = get_option(result_type, Options, ?DEFAULT_RESULT_TYPE),
@@ -482,23 +482,23 @@ get_query_response(LogFun, RecvPid, Version, Options) ->
 			{ok, Fields} ->
 			    case get_rows(Fieldcount, LogFun, RecvPid, ResultType, []) of
 				{ok, Rows} ->
-				    {data, #mysql_result{fieldinfo=Fields,
+				    {data, #p1_mysql_result{fieldinfo=Fields,
 							 rows=Rows}};
 				{error, Reason} ->
-				    {error, #mysql_result{error=Reason}}
+				    {error, #p1_mysql_result{error=Reason}}
 			    end;
 			{error, Reason} ->
-			    {error, #mysql_result{error=Reason}}
+			    {error, #p1_mysql_result{error=Reason}}
 		    end
 	    end;
 	{error, Reason} ->
-	    {error, #mysql_result{error=Reason}}
+	    {error, #p1_mysql_result{error=Reason}}
     end.
 
 %%--------------------------------------------------------------------
 %% Function: get_fields(LogFun, RecvPid, [], Version)
 %%           LogFun  = undefined | function() with arity 3
-%%           RecvPid = pid(), mysql_recv process
+%%           RecvPid = pid(), p1_mysql_recv process
 %%           Version = integer(), Representing MySQL version used
 %% Descrip.: Received and decode field information.
 %% Returns : {ok, FieldInfo} |
@@ -583,7 +583,7 @@ get_fields(LogFun, RecvPid, Res, ?MYSQL_4_1, ResultType) ->
 %% Function: get_rows(N, LogFun, RecvPid, [])
 %%           N       = integer(), number of rows to get
 %%           LogFun  = undefined | function() with arity 3
-%%           RecvPid = pid(), mysql_recv process
+%%           RecvPid = pid(), p1_mysql_recv process
 %% Descrip.: Receive and decode a number of rows.
 %% Returns : {ok, Rows} |
 %%           {error, Reason}
@@ -635,7 +635,7 @@ get_with_length(<<Length:8, Rest/binary>>) when Length < 251 ->
 
 close_connection(State) ->
     Result = gen_tcp:close(State#state.socket),
-    mysql:log(State#state.log_fun,  normal, "Closing connection ~p: ~p~n",
+    p1_mysql:log(State#state.log_fun,  normal, "Closing connection ~p: ~p~n",
 	      [State#state.socket, Result]),
     Result.
 
@@ -644,7 +644,7 @@ close_connection(State) ->
 %% Function: do_query(State, Query)
 %%           do_query(Sock, RecvPid, LogFun, Query)
 %%           Sock    = term(), gen_tcp socket
-%%           RecvPid = pid(), mysql_recv process
+%%           RecvPid = pid(), p1_mysql_recv process
 %%           LogFun  = undefined | function() with arity 3
 %%           Query   = string()
 %% Descrip.: Send a MySQL query and block awaiting it's response.
@@ -682,7 +682,7 @@ do_query(Sock, RecvPid, LogFun, Query, Version, Options) when is_pid(RecvPid),
 do_send(Sock, Packet, SeqNum, _LogFun) when is_binary(Packet),
 					    is_integer(SeqNum) ->
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
-    %%mysql:log(LogFun, debug, "mysql_conn: send packet ~p: ~p",
+    %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: send packet ~p: ~p",
     %%[SeqNum, Data]),
     gen_tcp:send(Sock, Data).
 
@@ -695,7 +695,7 @@ do_send(Sock, Packet, SeqNum, _LogFun) when is_binary(Packet),
 %% Returns : Version = string()
 %%--------------------------------------------------------------------
 normalize_version([$4,$.,$0|_T], LogFun) ->
-    mysql:log(LogFun, debug, "Switching to MySQL 4.0.x protocol.~n"),
+    p1_mysql:log(LogFun, debug, "Switching to MySQL 4.0.x protocol.~n"),
     ?MYSQL_4_0;
 normalize_version([$4,$.,$1|_T], _LogFun) ->
     ?MYSQL_4_1;
@@ -703,7 +703,7 @@ normalize_version([$5|_T], _LogFun) ->
     %% MySQL version 5.x protocol is compliant with MySQL 4.1.x:
     ?MYSQL_4_1;
 normalize_version(_Other, LogFun) ->
-    mysql:log(LogFun, error, "MySQL version not supported: MySQL Erlang "
+    p1_mysql:log(LogFun, error, "MySQL version not supported: MySQL Erlang "
 	      "module might not work correctly.~n"),
     %% Error, but trying the oldest protocol anyway:
     ?MYSQL_4_0.

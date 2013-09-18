@@ -6,29 +6,21 @@
 %%% @end
 %%% Created : 15 May 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%-------------------------------------------------------------------
--module(mysql_sup).
+-module(p1_mysql_app).
 
--behaviour(supervisor).
+-behaviour(application).
 
-%% API
--export([start_link/0]).
-
-%% Supervisor callbacks
--export([init/1]).
-
--define(SERVER, ?MODULE).
+%% Application callbacks
+-export([start/2, stop/1]).
 
 %%%===================================================================
-%%% API functions
+%%% Application callbacks
 %%%===================================================================
-start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+start(_StartType, _StartArgs) ->
+    p1_mysql_sup:start_link().
 
-%%%===================================================================
-%%% Supervisor callbacks
-%%%===================================================================
-init([]) ->
-    {ok, {{one_for_one, 10, 1}, []}}.
+stop(_State) ->
+    ok.
 
 %%%===================================================================
 %%% Internal functions
