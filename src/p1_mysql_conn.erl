@@ -364,6 +364,10 @@ loop(State) ->
 		      "Unexpected MySQL data (num ~p) :~n~p",
 		      [Num, Packet]),
 	    loop(State);
+        {p1_mysql_recv, RecvPid, closed, _Reason} ->
+            p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
+                         "Connection closed, exiting.", []),
+            close_connection(State);
 	close ->
 	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Received close signal, exiting.", []),
