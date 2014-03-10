@@ -5,7 +5,7 @@
 %%%
 %%% Created :  4 Aug 2005 by Magnus Ahltorp <ahltorp@nada.kth.se>
 %%%
-%%% Copyright (c) 2001-2004 Kungliga Tekniska Högskolan
+%%% Copyright (c) 2001-2004 Kungliga Tekniska HÃ¶gskolan
 %%% See the file COPYING
 %%%
 %%% Usage:
