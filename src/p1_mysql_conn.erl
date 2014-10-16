@@ -224,7 +224,7 @@ wait_fetch_result(TRef, Pid) ->
 	    wait_fetch_result(TRef, Pid);
 	{timeout, TRef, _Info} ->
 	    stop(Pid),
-	    {error, "query timed out"}
+	    {error, #p1_mysql_result{error="query timed out"}}
     end.
 
 stop(Pid) ->
