@@ -1,5 +1,5 @@
 %%%----------------------------------------------------------------------
-%%% File    : esip.app.src
+%%% File    : p1_mysql.app.src
 %%% Author  : Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%% Purpose : Application package description
 %%% Created : 4 Apr 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
