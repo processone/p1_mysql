@@ -66,6 +66,7 @@
 -export([start/7,
 	 start/6,
 	 start_link/6,
+	 start_link/7,
 	 fetch/3,
 	 fetch/4,
 	 squery/4,
@@ -156,15 +157,19 @@ start(Host, Port, User, Password,
     post_start(Pid, LogFun).
 
 start_link(Host, Port, User, Password,
-	   Database, LogFun) when is_list(Host),
+		Database, LogFun) ->
+	start_link(Host, Port, User, Password, Database, undefined, LogFun)
+.
+
+start_link(Host, Port, User, Password,
+	   Database, MaxPacketSize, LogFun) when is_list(Host),
 				  is_integer(Port),
 				  is_list(User),
 				  is_list(Password),
 				  is_list(Database) ->
     ConnPid = self(),
     Pid = spawn_link(fun () ->
-			init(Host, Port, User, Password, Database,
-			     LogFun, ConnPid)
+			init(Host, Port, User, Password, Database, MaxPacketSize, LogFun, ConnPid)
 		end),
     post_start(Pid, LogFun).
 
