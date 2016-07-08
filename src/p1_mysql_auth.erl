@@ -18,7 +18,8 @@
 %%--------------------------------------------------------------------
 -export([
 	 do_old_auth/7,
-	 do_new_auth/8
+  do_new_auth/8,
+	 do_new_auth/9
 	]).
 
 %%--------------------------------------------------------------------
@@ -72,8 +73,27 @@ do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
 %% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
 do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, LogFun) ->
+    do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, undefinded, LogFun)
+  .
+
+%%--------------------------------------------------------------------
+%% Function: do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1,
+%%                       Salt2, LogFun)
+%%           Sock     = term(), gen_tcp socket
+%%           RecvPid  = pid(), receiver process pid
+%%           SeqNum   = integer(), first sequence number we should use
+%%           User     = string(), MySQL username
+%%           Password = string(), MySQL password
+%%           Salt1    = string(), salt 1 from server greeting
+%%           Salt2    = string(), salt 2 from server greeting
+%%           MaxPacketSize = integer(), mysql packet size
+%%           LogFun   = undefined | function() of arity 3
+%% Descrip.: Perform MySQL authentication.
+%% Returns : result of p1_mysql_conn:do_recv/3
+%%--------------------------------------------------------------------
+do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, MaxPacketSize, LogFun) ->
     Auth = password_new(Password, Salt1 ++ Salt2),
-    Packet2 = make_new_auth(User, Auth, none),
+    Packet2 = make_new_auth(User, Auth, none, MaxPacketSize),
     do_send(Sock, Packet2, SeqNum, LogFun),
     case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
 	{ok, Packet3, SeqNum2} ->
@@ -108,14 +128,14 @@ password_old(Password, Salt) ->
 make_auth(User, Password) ->
     Caps = ?LONG_PASSWORD bor ?LONG_FLAG
 	bor ?TRANSACTIONS bor ?FOUND_ROWS,
-    Maxsize = 0,
+    Maxsize = ?MAX_PACKET_SIZE,
     UserB = list_to_binary(User),
     PasswordB = Password,
     <<Caps:16/little, Maxsize:24/little, UserB/binary, 0:8,
     PasswordB/binary>>.
 
 %% part of do_new_auth/4, which is part of mysql_init/4
-make_new_auth(User, Password, Database) ->
+make_new_auth(User, Password, Database, MaxPacketSize) ->
     DBCaps = case Database of
 		 none ->
 		     0;
@@ -125,7 +145,11 @@ make_new_auth(User, Password, Database) ->
     Caps = ?LONG_PASSWORD bor ?LONG_FLAG bor ?TRANSACTIONS bor
 	?PROTOCOL_41 bor ?SECURE_CONNECTION bor DBCaps
 	bor ?FOUND_ROWS,
-    Maxsize = ?MAX_PACKET_SIZE,
+    Maxsize =  case MaxPacketSize /= undefined of
+                 true -> MaxPacketSize;
+                 false -> ?MAX_PACKET_SIZE;
+                 _ -> ?MAX_PACKET_SIZE
+               end,
     UserB = list_to_binary(User),
     PasswordL = size(Password),
     DatabaseB = case Database of

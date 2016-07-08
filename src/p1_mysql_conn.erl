@@ -63,7 +63,8 @@
 %%--------------------------------------------------------------------
 %% External exports
 %%--------------------------------------------------------------------
--export([start/6,
+-export([start/7,
+	 start/6,
 	 start_link/6,
 	 fetch/3,
 	 fetch/4,
@@ -113,14 +114,43 @@
 %%           Reason = string()
 %%--------------------------------------------------------------------
 start(Host, Port, User, Password,
-      Database, LogFun) when is_list(Host),
+		Database, LogFun) when is_list(Host),
+	is_integer(Port),
+	is_list(User),
+	is_list(Password),
+	is_list(Database) ->
+	ConnPid = self(),
+	Pid = spawn(fun () ->
+		init(Host, Port, User, Password, Database, undefined,
+			LogFun, ConnPid)
+							end),
+	post_start(Pid, LogFun).
+
+%%--------------------------------------------------------------------
+%% Function: start(Host, Port, User, Password, Database, LogFun)
+%% Function: start_link(Host, Port, User, Password, Database, LogFun)
+%%           Host     = string()
+%%           Port     = integer()
+%%           User     = string()
+%%           Password = string()
+%%           Database = string()
+%%           MaxPacketSize = integer()
+%%           LogFun   = undefined | function() of arity 3
+%% Descrip.: Starts a p1_mysql_conn process that connects to a MySQL
+%%           server, logs in and chooses a database.
+%% Returns : {ok, Pid} | {error, Reason}
+%%           Pid    = pid()
+%%           Reason = string()
+%%--------------------------------------------------------------------
+start(Host, Port, User, Password,
+      Database, MaxPacketSize, LogFun) when is_list(Host),
 			     is_integer(Port),
 			     is_list(User),
 			     is_list(Password),
 			     is_list(Database) ->
     ConnPid = self(),
     Pid = spawn(fun () ->
-			init(Host, Port, User, Password, Database,
+			init(Host, Port, User, Password, Database, MaxPacketSize,
 			     LogFun, ConnPid)
 		end),
     post_start(Pid, LogFun).
@@ -288,6 +318,7 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           User     = string()
 %%           Password = string()
 %%           Database = string()
+%%				   MaxPacketSize = integer()
 %%           LogFun   = undefined | function() of arity 3
 %%           Parent   = pid() of process starting this p1_mysql_conn
 %% Descrip.: Connect to a MySQL server, log in and chooses a database.
@@ -295,10 +326,10 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           we were successfull.
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
-init(Host, Port, User, Password, Database, LogFun, Parent) ->
+init(Host, Port, User, Password, Database, MaxPacketSize, LogFun, Parent) ->
     case p1_mysql_recv:start_link(Host, Port, LogFun, self()) of
 	{ok, RecvPid, Sock} ->
-	    case mysql_init(Sock, RecvPid, User, Password, LogFun) of
+	    case mysql_init(Sock, RecvPid, User, Password, MaxPacketSize, LogFun) of
 		{ok, Version} ->
 		    case do_query(Sock, RecvPid, LogFun, "use " ++ Database,
 				  Version, [{result_type, binary}]) of
@@ -388,12 +419,13 @@ loop(State) ->
 %%           RecvPid  = pid(), p1_mysql_recv process
 %%           User     = string()
 %%           Password = string()
+%%				   MaxPacketSize = integer()
 %%           LogFun   = undefined | function() with arity 3
 %% Descrip.: Try to authenticate on our new socket.
 %% Returns : ok | {error, Reason}
 %%           Reason = string()
 %%--------------------------------------------------------------------
-mysql_init(Sock, RecvPid, User, Password, LogFun) ->
+mysql_init(Sock, RecvPid, User, Password, MaxPacketSize, LogFun) ->
     case do_recv(LogFun, RecvPid, undefined) of
 	{ok, Packet, InitSeqNum} ->
 	    {Version, Salt1, Salt2, Caps} = greeting(Packet, LogFun),
@@ -403,7 +435,7 @@ mysql_init(Sock, RecvPid, User, Password, LogFun) ->
 			p1_mysql_auth:do_new_auth(Sock, RecvPid,
 					       InitSeqNum + 1,
 					       User, Password,
-					       Salt1, Salt2, LogFun);
+					       Salt1, Salt2, MaxPacketSize, LogFun);
 		    _ ->
 			p1_mysql_auth:do_old_auth(Sock, RecvPid,
 					       InitSeqNum + 1,
