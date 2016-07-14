@@ -92,6 +92,12 @@ do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, LogFun) ->
 %% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
 do_new_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, Salt2, MaxPacketSize, LogFun) ->
+    Maxsize =  case MaxPacketSize /= undefined of
+               true -> MaxPacketSize;
+               false -> ?MAX_PACKET_SIZE;
+               _ -> ?MAX_PACKET_SIZE
+             end,
+    p1_mysql:log(LogFun, normal, "p1_mysql_auth MaxPacktSize: ~p", [Maxsize]),
     Auth = password_new(Password, Salt1 ++ Salt2),
     Packet2 = make_new_auth(User, Auth, none, MaxPacketSize),
     do_send(Sock, Packet2, SeqNum, LogFun),
