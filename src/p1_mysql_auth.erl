@@ -53,6 +53,7 @@
 %% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
 do_old_auth(Sock, RecvPid, SeqNum, User, Password, Salt1, LogFun) ->
+    p1_mysql:log(LogFun, normal, "p1_mysql_auth did old auth", []),
     Auth = password_old(Password, Salt1),
     Packet2 = make_auth(User, Auth),
     do_send(Sock, Packet2, SeqNum, LogFun),
