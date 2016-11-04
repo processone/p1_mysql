@@ -192,7 +192,8 @@ fetch(Pid, Query, From) ->
 fetch(Pid, Query, From, Timeout) ->
     squery(Pid, Query, From, [{timeout, Timeout}]).
 
-squery(Pid, Query, From, Options) when is_pid(Pid), is_list(Query) ->
+squery(Pid, Query, From, Options) when is_pid(Pid),
+                 (is_list(Query) or is_binary(Query)) ->
     Self = self(),
     Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
     TRef = erlang:start_timer(Timeout, self(), timeout),
@@ -666,7 +667,7 @@ do_query(State, Query, Options) when is_record(State, state) ->
 	    ).
 
 do_query(Sock, RecvPid, LogFun, Query, Version, Options) when is_pid(RecvPid),
-							      is_list(Query) ->
+							      (is_list(Query) or is_binary(Query)) ->
     Packet = list_to_binary([?MYSQL_QUERY_OP, Query]),
     case do_send(Sock, Packet, 0, LogFun) of
 	ok ->
