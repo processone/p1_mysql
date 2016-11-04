@@ -193,7 +193,7 @@ fetch(Pid, Query, From, Timeout) ->
     squery(Pid, Query, From, [{timeout, Timeout}]).
 
 squery(Pid, Query, From, Options) when is_pid(Pid),
-								(is_list(Query) or is_binary(Query)) ->
+                 (is_list(Query) or is_binary(Query)) ->
     Self = self(),
     Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
     TRef = erlang:start_timer(Timeout, self(), timeout),
