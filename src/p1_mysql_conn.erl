@@ -60,11 +60,15 @@
 
 -module(p1_mysql_conn).
 
+-define(CONNECT_TIMEOUT, 5000).
+
 %%--------------------------------------------------------------------
 %% External exports
 %%--------------------------------------------------------------------
 -export([start/6,
+	 start/7,
 	 start_link/6,
+	 start_link/7,
 	 fetch/3,
 	 fetch/4,
 	 squery/4,
@@ -112,29 +116,35 @@
 %%           Pid    = pid()
 %%           Reason = string()
 %%--------------------------------------------------------------------
-start(Host, Port, User, Password,
-      Database, LogFun) when is_list(Host),
-			     is_integer(Port),
-			     is_list(User),
-			     is_list(Password),
-			     is_list(Database) ->
+start(Host, Port, User, Password, Database, LogFun) ->
+    start(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
+
+start(Host, Port, User, Password, Database, ConnectTimeout,
+      LogFun) when is_list(Host),
+		   is_integer(Port),
+		   is_list(User),
+		   is_list(Password),
+		   is_list(Database) ->
     ConnPid = self(),
     Pid = spawn(fun () ->
 			init(Host, Port, User, Password, Database,
-			     LogFun, ConnPid)
+			     ConnectTimeout, LogFun, ConnPid)
 		end),
     post_start(Pid, LogFun).
 
-start_link(Host, Port, User, Password,
-	   Database, LogFun) when is_list(Host),
-				  is_integer(Port),
-				  is_list(User),
-				  is_list(Password),
-				  is_list(Database) ->
+start_link(Host, Port, User, Password, Database, LogFun) ->
+    start_link(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
+
+start_link(Host, Port, User, Password, Database, ConnectTimeout,
+	   LogFun) when is_list(Host),
+			is_integer(Port),
+			is_list(User),
+			is_list(Password),
+			is_list(Database) ->
     ConnPid = self(),
     Pid = spawn_link(fun () ->
 			init(Host, Port, User, Password, Database,
-			     LogFun, ConnPid)
+			     ConnectTimeout, LogFun, ConnPid)
 		end),
     post_start(Pid, LogFun).
 
@@ -296,8 +306,8 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           we were successfull.
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
-init(Host, Port, User, Password, Database, LogFun, Parent) ->
-    case p1_mysql_recv:start_link(Host, Port, LogFun, self()) of
+init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent) ->
+    case p1_mysql_recv:start_link(Host, Port, ConnectTimeout, LogFun, self()) of
 	{ok, RecvPid, Sock} ->
 	    case mysql_init(Sock, RecvPid, User, Password, LogFun) of
 		{ok, Version} ->
