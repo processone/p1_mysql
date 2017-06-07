@@ -1,3 +1,7 @@
+# Version 1.0.3
+
+* Make it possible to set connect timeout
+
 # Version 1.0.2
 
 * accepting query as iodata() on p1_mysql_conn:squery/4 function (Felipe Ripoll)
