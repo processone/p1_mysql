@@ -1,3 +1,7 @@
+# Version 1.0.4
+
+* Update coverall script
+
 # Version 1.0.3
 
 * Make it possible to set connect timeout
