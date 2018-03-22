@@ -1,3 +1,7 @@
+# Version 1.0.5
+
+* Fix compilation with rebar3
+
 # Version 1.0.4
 
 * Update coverall script
