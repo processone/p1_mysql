@@ -34,6 +34,8 @@
 -export([start_link/5
 	]).
 
+-include_lib("kernel/include/inet.hrl").
+
 -record(state, {
 	  socket,
 	  parent,
@@ -42,6 +44,7 @@
 	 }).
 
 -define(SECURE_CONNECTION, 32768).
+-define(DNS_LOOKUP_TIMEOUT, 5000).
 
 %%====================================================================
 %% External functions
@@ -95,7 +98,7 @@ start_link(Host, Port, ConnectTimeout, LogFun, Parent) when is_list(Host),
 %% Returns : error | never returns
 %%--------------------------------------------------------------------
 init(Host, Port, LogFun, Parent) ->
-    case gen_tcp:connect(Host, Port, [binary, {packet, 0}]) of
+    case connect(Host, Port) of
 	{ok, Sock} ->
 	    Parent ! {p1_mysql_recv, self(), init, {ok, Sock}},
 	    State = #state{socket  = Sock,
@@ -104,11 +107,12 @@ init(Host, Port, LogFun, Parent) ->
 			   data    = <<>>
 			  },
 	    loop(State);
-	E ->
+	{error, E} ->
+	    Reason = format_inet_error(E),
 	    p1_mysql:log(LogFun, error,
-		      "p1_mysql_recv: Failed connecting to ~p:~p : ~p",
-		      [Host, Port, E]),
-	    Msg = lists:flatten(io_lib:format("connect failed : ~p", [E])),
+			 "p1_mysql_recv: Failed connecting to ~s:~p: ~s",
+			 [Host, Port, Reason]),
+	    Msg = lists:flatten(io_lib:format("connect failed: ~s", [Reason])),
 	    Parent ! {p1_mysql_recv, self(), init, {error, Msg}}
     end.
 
@@ -162,4 +166,74 @@ sendpacket(Parent, Data) ->
 	    end;
 	_ ->
 	    Data
+    end.
+
+%%--------------------------------------------------------------------
+%% Connecting stuff
+%%--------------------------------------------------------------------
+connect(Host, Port) ->
+    case lookup(Host) of
+	{ok, AddrsFamilies} ->
+	    do_connect(AddrsFamilies, Port, {error, nxdomain});
+	{error, _} = Err ->
+	    Err
+    end.
+
+do_connect([{IP, Family}|AddrsFamilies], Port, _Err) ->
+    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, Family]) of
+	{ok, Sock} ->
+	    {ok, Sock};
+	{error, _} = Err ->
+	    do_connect(AddrsFamilies, Port, Err)
+    end;
+do_connect([], _Port, Err) ->
+    Err.
+
+lookup(Host) ->
+    case inet:parse_address(Host) of
+	{ok, IP} ->
+	    {ok, [{IP, get_addr_type(IP)}]};
+	{error, _} ->
+	    do_lookup([{Host, Family} || Family <- [inet6, inet]],
+		      [], {error, nxdomain})
+    end.
+
+do_lookup([{Host, Family}|HostFamilies], AddrFamilies, Err) ->
+    case inet:gethostbyname(Host, Family, ?DNS_LOOKUP_TIMEOUT) of
+	{ok, HostEntry} ->
+	    Addrs = host_entry_to_addrs(HostEntry),
+	    AddrFamilies1 = [{Addr, Family} || Addr <- Addrs],
+	    do_lookup(HostFamilies,
+		      AddrFamilies ++ AddrFamilies1,
+		      Err);
+	{error, _} = Err1 ->
+	    do_lookup(HostFamilies, AddrFamilies, Err1)
+    end;
+do_lookup([], [], Err) ->
+    Err;
+do_lookup([], AddrFamilies, _Err) ->
+    {ok, AddrFamilies}.
+
+host_entry_to_addrs(#hostent{h_addr_list = AddrList}) ->
+    lists:filter(
+      fun(Addr) ->
+	      try get_addr_type(Addr) of
+		  _ -> true
+	      catch _:badarg ->
+		      false
+	      end
+      end, AddrList).
+
+get_addr_type({_, _, _, _}) -> inet;
+get_addr_type({_, _, _, _, _, _, _, _}) -> inet6;
+get_addr_type(_) -> erlang:error(badarg).
+
+format_inet_error(closed) ->
+    "connection closed";
+format_inet_error(timeout) ->
+    format_inet_error(etimedout);
+format_inet_error(Reason) ->
+    case inet:format_error(Reason) of
+	"unknown POSIX error" -> atom_to_list(Reason);
+	Txt -> Txt
     end.
