@@ -130,7 +130,7 @@ start(Host, Port, User, Password, Database, ConnectTimeout,
 			init(Host, Port, User, Password, Database,
 			     ConnectTimeout, LogFun, ConnPid)
 		end),
-    post_start(Pid, LogFun).
+    post_start(Pid, ConnectTimeout, LogFun).
 
 start_link(Host, Port, User, Password, Database, LogFun) ->
     start_link(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
@@ -146,13 +146,15 @@ start_link(Host, Port, User, Password, Database, ConnectTimeout,
 			init(Host, Port, User, Password, Database,
 			     ConnectTimeout, LogFun, ConnPid)
 		end),
-    post_start(Pid, LogFun).
+    post_start(Pid, ConnectTimeout, LogFun).
 
 %% part of start/6 or start_link/6:
-post_start(Pid, _LogFun) ->
+post_start(Pid, ConnectTimeout, _LogFun) ->
     %%Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
     %%TODO find a way to get configured Options here
-    Timeout= ?DEFAULT_STANDALONE_TIMEOUT,
+    Timeout = if is_integer(ConnectTimeout) -> ConnectTimeout;
+		 true -> ?DEFAULT_STANDALONE_TIMEOUT
+	      end,
     receive
 	{p1_mysql_conn, Pid, ok} ->
 	    {ok, Pid};
