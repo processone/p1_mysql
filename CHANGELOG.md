@@ -1,3 +1,7 @@
+# Version 1.0.7
+
+* Fix connection timeout handling
+
 # Version 1.0.6
 
 * Add support for ipv6 connections
