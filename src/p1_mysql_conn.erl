@@ -721,6 +721,9 @@ normalize_version([$4,$.,$1|_T], _LogFun) ->
 normalize_version([$5|_T], _LogFun) ->
     %% MySQL version 5.x protocol is compliant with MySQL 4.1.x:
     ?MYSQL_4_1;
+normalize_version([$8|_T], _LogFun) ->
+    %% MySQL version 8.x appears to be mostly compatible with  MySQL 5.x:
+    ?MYSQL_4_1;
 normalize_version(_Other, LogFun) ->
     p1_mysql:log(LogFun, error, "MySQL version not supported: MySQL Erlang "
 	      "module might not work correctly.~n"),
