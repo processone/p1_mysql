@@ -22,7 +22,7 @@
 %%%----------------------------------------------------------------------
 {application, p1_mysql,
  [{description,  "Pure Erlang MySQL driver"},
-  {vsn,          "1.0.7"},
+  {vsn,          "1.0.8"},
   {modules,      []},
   {registered,   []},
   {applications, [kernel, stdlib]},
