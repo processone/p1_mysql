@@ -386,7 +386,7 @@ loop(State) ->
                          "Connection closed, exiting.", []),
             close_connection(State);
 	close ->
-	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
+	    p1_mysql:log(State#state.log_fun, info, "p1_mysql_conn: "
 		      "Received close signal, exiting.", []),
 	    close_connection(State);
         Unknown ->
