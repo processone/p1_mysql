@@ -30,7 +30,6 @@
 
   %% hex.pm packaging:
   {licenses, ["BSD-3 Clause", "Apache 2.0"]},
-  {maintainers, ["ProcessOne"]},
   {links, [{"Github", "https://github.com/processone/p1_mysql"}]}]}.
 
 %% Local Variables:
