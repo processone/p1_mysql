@@ -1,3 +1,8 @@
+# Version 1.0.9
+
+* Add contribution guide
+* Don't log errors on shutdown
+
 # Version 1.0.8
 
 * Add support for mysql8 and cache\_sha2\_password authentication
