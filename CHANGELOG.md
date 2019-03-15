@@ -1,3 +1,7 @@
+# Version 1.0.10
+
+* Make socket close always lead to terminating p1\_mysql\_conn
+
 # Version 1.0.9
 
 * Add contribution guide
