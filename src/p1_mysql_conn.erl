@@ -372,7 +372,14 @@ loop(State) ->
 		    erlang:cancel_timer(Ref),
 		    gen_server:reply(GenSrvFrom, Res)
 	    end,
-	    loop(State);
+	    case Res of
+		{error, #p1_mysql_result{error="p1_mysql_recv: socket was closed"}} ->
+		    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
+							     "Connection closed, exiting.", []),
+		    close_connection(State);
+		_ ->
+		    loop(State)
+	    end;
 	{p1_mysql_recv, RecvPid, data, Packet, Num} ->
 	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 		      "Received MySQL data when not expecting any "
