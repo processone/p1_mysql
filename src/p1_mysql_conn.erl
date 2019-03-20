@@ -273,6 +273,10 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 	{p1_mysql_recv, RecvPid, closed, _E} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
 		      " socket was closed ~p~n", [{RecvPid, _E}]),
+	    {error, "p1_mysql_recv: socket was closed"};
+	close ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
+					" received close~n", []),
 	    {error, "p1_mysql_recv: socket was closed"}
     end;
 do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
@@ -287,6 +291,10 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 	{p1_mysql_recv, RecvPid, closed, _E} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
 		      " socket was closed 2 ~p~n", [{RecvPid, _E}]),
+	    {error, "p1_mysql_recv: socket was closed"};
+	close ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
+					" received close~n", []),
 	    {error, "p1_mysql_recv: socket was closed"}
         end.
 
