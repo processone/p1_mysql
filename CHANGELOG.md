@@ -1,3 +1,7 @@
+# Version 1.0.11
+
+* Handle close even in do\_recv, this fixes potential connection being stuck after timeout
+
 # Version 1.0.10
 
 * Make socket close always lead to terminating p1\_mysql\_conn
