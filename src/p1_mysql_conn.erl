@@ -519,7 +519,12 @@ get_query_response(LogFun, RecvPid, Version, Options) ->
 	    case Fieldcount of
 		0 ->
 		    %% No Tabular data
-		    <<AffectedRows:8, _Rest2/binary>> = Rest,
+		    AffectedRows = case Rest of
+			<<16#fc, Value:16/little, _/binary>> -> Value;
+			<<16#fd, Value:24/little, _/binary>> -> Value;
+			<<16#fe, Value:64/little, _/binary>> -> Value;
+			<<Value:8, _/binary>> -> Value
+		    end,
 		    {updated, #p1_mysql_result{affectedrows=AffectedRows}};
 		255 ->
 		    <<_Code:16/little, Message/binary>>  = Rest,
