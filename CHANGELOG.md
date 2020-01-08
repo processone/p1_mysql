@@ -1,3 +1,8 @@
+# Version 1.0.12
+
+* Properly handle decoding of number of returned fields when there is
+  more than 128 of them.
+
 # Version 1.0.11
 
 * Handle close even in do\_recv, this fixes potential connection being stuck after timeout
