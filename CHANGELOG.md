@@ -1,3 +1,7 @@
+# Version 1.0.13
+
+* Update copyright year
+
 # Version 1.0.12
 
 * Properly handle decoding of number of returned fields when there is
