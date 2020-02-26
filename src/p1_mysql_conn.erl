@@ -67,8 +67,10 @@
 %%--------------------------------------------------------------------
 -export([start/6,
 	 start/7,
+	 start/8,
 	 start_link/6,
 	 start_link/7,
+	 start_link/8,
 	 fetch/3,
 	 fetch/4,
 	 squery/4,
@@ -122,7 +124,11 @@ start(Host, Port, User, Password, Database, LogFun) ->
     start(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
 
 start(Host, Port, User, Password, Database, ConnectTimeout,
-      LogFun) when is_list(Host),
+      LogFun) ->
+    start(Host, Port, User, Password, Database, ConnectTimeout, LogFun, []).
+
+start(Host, Port, User, Password, Database, ConnectTimeout,
+      LogFun, SSLOpts) when is_list(Host),
 		   is_integer(Port),
 		   is_list(User),
 		   is_list(Password),
@@ -130,7 +136,7 @@ start(Host, Port, User, Password, Database, ConnectTimeout,
     ConnPid = self(),
     Pid = spawn(fun () ->
 			init(Host, Port, User, Password, Database,
-			     ConnectTimeout, LogFun, ConnPid)
+			     ConnectTimeout, LogFun, ConnPid, SSLOpts)
 		end),
     post_start(Pid, ConnectTimeout, LogFun).
 
@@ -138,7 +144,12 @@ start_link(Host, Port, User, Password, Database, LogFun) ->
     start_link(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
 
 start_link(Host, Port, User, Password, Database, ConnectTimeout,
-	   LogFun) when is_list(Host),
+	   LogFun) ->
+    start_link(Host, Port, User, Password, Database, ConnectTimeout,
+    LogFun, []).
+
+start_link(Host, Port, User, Password, Database, ConnectTimeout,
+	   LogFun, SSLOpts) when is_list(Host),
 			is_integer(Port),
 			is_list(User),
 			is_list(Password),
@@ -146,7 +157,7 @@ start_link(Host, Port, User, Password, Database, ConnectTimeout,
     ConnPid = self(),
     Pid = spawn_link(fun () ->
 			init(Host, Port, User, Password, Database,
-			     ConnectTimeout, LogFun, ConnPid)
+			     ConnectTimeout, LogFun, ConnPid, SSLOpts)
 		end),
     post_start(Pid, ConnectTimeout, LogFun).
 
@@ -318,11 +329,11 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           we were successfull.
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
-init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent) ->
+init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent, SSLOpts) ->
     case p1_mysql_recv:start_link(Host, Port, ConnectTimeout, LogFun, self()) of
-	{ok, RecvPid, Sock} ->
-	    case mysql_init(Sock, RecvPid, User, Password, LogFun) of
-		{ok, Version} ->
+	{ok, RecvPid, Sock0} ->
+	    case mysql_init(Sock0, RecvPid, User, Password, LogFun, SSLOpts) of
+		{ok, {SockMod, RawSock} = Sock, Version} ->
 		    case do_query(Sock, RecvPid, LogFun, "use " ++ Database,
 				  Version, [{result_type, binary}]) of
 			{error, MySQLRes} ->
@@ -331,7 +342,7 @@ init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent) ->
 				      " to database ~p : ~p",
 				      [Database,
 				       p1_mysql:get_result_reason(MySQLRes)]),
-			    gen_tcp:close(Sock),
+			    SockMod:close(RawSock),
 			    Parent ! {p1_mysql_conn, self(),
 				      {error, failed_changing_database}};
 			%% ResultType: data | updated
@@ -420,41 +431,88 @@ loop(State) ->
 %%           Password = string()
 %%           LogFun   = undefined | function() with arity 3
 %% Descrip.: Try to authenticate on our new socket.
-%% Returns : ok | {error, Reason}
+%% Returns : {ok, SockPair, Version} | {error, Reason}
 %%           Reason = string()
 %%--------------------------------------------------------------------
-mysql_init(Sock, RecvPid, User, Password, LogFun) ->
+mysql_init(Sock, RecvPid, User, Password, LogFun, SSLOpts) ->
     case do_recv(LogFun, RecvPid, undefined) of
 	{ok, Packet, InitSeqNum} ->
 	    {Version, Salt, Caps, AuthPlug} = greeting(Packet, LogFun),
-	    AuthRes = p1_mysql_auth:do_auth(AuthPlug, Sock, RecvPid,
-					    InitSeqNum + 1,
-					    User, Password,
-					    Salt, Caps, LogFun),
-	    case AuthRes of
-		{ok, <<0:8, _Rest/binary>>, _RecvNum} ->
-		    {ok,Version};
-		{ok, <<255:8, Code:16/little, Message/binary>>, _RecvNum} ->
-		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-			      "init error ~p: ~p~n",
-			      [Code, binary_to_list(Message)]),
-		    {error, binary_to_list(Message)};
-		{ok, RecvPacket, _RecvNum} ->
-		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-			      "init unknown error ~p~n",
-			      [binary_to_list(RecvPacket)]),
-		    {error, binary_to_list(RecvPacket)};
-		{error, Reason} ->
-		    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-			      "init failed receiving data : ~p~n",
-			      [Reason]),
-		    {error, Reason}
+	    case Caps band ?CLIENT_SSL of
+		0 ->
+		    case proplists:get_bool(ssl_required, SSLOpts) of
+			true ->
+			    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+							"init failed - ssl required, but not available~n",
+					 []),
+			    {error, "SSL not available"};
+			false ->
+			    authenticate({gen_tcp, Sock}, RecvPid, User, Password, LogFun,
+					 InitSeqNum, Version, Salt, Caps, AuthPlug)
+		    end;
+		_ ->
+		    case proplists:get_bool(ssl, SSLOpts) orelse proplists:get_bool(ssl_required, SSLOpts) of
+			true ->
+			    case start_ssl(Sock, RecvPid, LogFun, InitSeqNum+1, AuthPlug) of
+				{ok, NewSock} ->
+				    authenticate(NewSock, RecvPid, User, Password, LogFun,
+						 InitSeqNum+1, Version, Salt, Caps, AuthPlug);
+				{error, Reason} ->
+				    {error, Reason}
+			    end;
+			_ ->
+			    authenticate({gen_tcp, Sock}, RecvPid, User, Password, LogFun,
+					 InitSeqNum, Version, Salt, Caps, AuthPlug)
+		    end
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
     end.
 
 %% part of mysql_init/4
+
+start_ssl(Sock, RecvPid, LogFun, SeqNum, AuthPlug) ->
+    Packet = p1_mysql_auth:get_auth_head(AuthPlug, ?CLIENT_SSL),
+    Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
+    p1_mysql:log(LogFun, debug, "p1_mysql_conn send start ssl ~p: ~p", [SeqNum, Packet]),
+    gen_tcp:send(Sock, Data),
+    RecvPid ! {start_ssl},
+    receive
+	{p1_mysql_recv, RecvPid, ssl, {ok, SSLSock}} ->
+	    {ok, {ssl, SSLSock}};
+	{p1_mysql_recv, RecvPid, ssl, {error, Reason}} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"ssl start failed: ~p~n",
+			 [Reason]),
+	    {error, "ssl failed"}
+    end.
+
+authenticate(Sock, RecvPid, User, Password, LogFun, SeqNum,
+	     Version, Salt, Caps, AuthPlug) ->
+    AuthRes = p1_mysql_auth:do_auth(AuthPlug, Sock, RecvPid,
+				    SeqNum + 1,
+				    User, Password,
+				    Salt, Caps, LogFun),
+    case AuthRes of
+	{ok, <<0:8, _Rest/binary>>, _RecvNum} ->
+	    {ok, Sock, Version};
+	{ok, <<255:8, Code:16/little, Message/binary>>, _RecvNum} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"init error ~p: ~p~n",
+			 [Code, binary_to_list(Message)]),
+	    {error, binary_to_list(Message)};
+	{ok, RecvPacket, _RecvNum} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"init unknown error ~p~n",
+			 [binary_to_list(RecvPacket)]),
+	    {error, binary_to_list(RecvPacket)};
+	{error, Reason} ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"init failed receiving data : ~p~n",
+			 [Reason]),
+	    {error, Reason}
+    end.
+
 greeting(Packet, LogFun) ->
     <<Protocol:8, Rest/binary>> = Packet,
     case Protocol of
@@ -688,7 +746,8 @@ get_with_length(<<Length:8, Rest/binary>>) when Length < 251 ->
     split_binary(Rest, Length).
 
 close_connection(State) ->
-    Result = gen_tcp:close(State#state.socket),
+    {SockMod, Socket} = State#state.socket,
+    Result = SockMod:close(Socket),
     p1_mysql:log(State#state.log_fun,  normal, "Closing connection ~p: ~p~n",
 	      [State#state.socket, Result]),
     Result.
@@ -726,19 +785,19 @@ do_query(Sock, RecvPid, LogFun, Query, Version, Options) when is_pid(RecvPid),
 
 %%--------------------------------------------------------------------
 %% Function: do_send(Sock, Packet, SeqNum, LogFun)
-%%           Sock   = term(), gen_tcp socket
+%%           Sock   = {SockMod, Socket}, socket
 %%           Packet = binary()
 %%           SeqNum = integer(), packet sequence number
 %%           LogFun = undefined | function() with arity 3
 %% Descrip.: Send a packet to the MySQL server.
 %% Returns : result of gen_tcp:send/2
 %%--------------------------------------------------------------------
-do_send(Sock, Packet, SeqNum, _LogFun) when is_binary(Packet),
+do_send({SockMod, Sock}, Packet, SeqNum, _LogFun) when is_binary(Packet),
 					    is_integer(SeqNum) ->
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
     %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: send packet ~p: ~p",
     %%[SeqNum, Data]),
-    gen_tcp:send(Sock, Data).
+    SockMod:send(Sock, Data).
 
 %%--------------------------------------------------------------------
 %% Function: get_field_datatype(DataType)

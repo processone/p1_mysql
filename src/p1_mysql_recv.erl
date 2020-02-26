@@ -126,18 +126,29 @@ init(Host, Port, LogFun, Parent) ->
 loop(State) ->
     Sock = State#state.socket,
     receive
-	{tcp, Sock, InData} ->
+	{T, Sock, InData} when T == tcp; T == ssl ->
 	    NewData = list_to_binary([State#state.data, InData]),
 	    %% send data to parent if we have enough data
 	    Rest = sendpacket(State#state.parent, NewData),
 	    loop(State#state{data = Rest});
-	{tcp_error, Sock, Reason} ->
+	{start_ssl} ->
+	    case ssl:connect(Sock, [binary, {packet, 0}]) of
+		{ok, SSLSock} ->
+		    State#state.parent ! {p1_mysql_recv, self(), ssl,
+					  {ok, SSLSock}},
+		    loop(State#state{socket = SSLSock});
+		{error, Reason} ->
+		    State#state.parent ! {p1_mysql_recv, self(), ssl,
+					  {error, Reason}},
+		    error
+	    end;
+	{T, Sock, Reason} when T == tcp_error; T == ssl_error ->
 	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_recv: "
 		      "Socket ~p closed : ~p", [Sock, Reason]),
 	    State#state.parent ! {p1_mysql_recv, self(), closed,
 				  {error, Reason}},
 	    error;
-	{tcp_closed, Sock} ->
+	{T, Sock} when T == tcp_closed; T == ssl_closed->
 	    p1_mysql:log(State#state.log_fun, debug, "p1_mysql_recv: "
 		      "Socket ~p closed", [Sock]),
 	    State#state.parent ! {p1_mysql_recv, self(), closed, normal},

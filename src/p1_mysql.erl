@@ -79,6 +79,7 @@
 	 asciz_binary/2,
 
 	 connect/7,
+	 connect/8,
 	 stop/0,
 
      gc_each/1
@@ -120,7 +121,8 @@
 	  port,		%% undefined | integer()
 	  user,		%% undefined | string()
 	  password,	%% undefined | string()
-	  database	%% undefined | string()
+	  database,	%% undefined | string(),
+          ssl_opts = []	%% list()
 	 }).
 
 %%--------------------------------------------------------------------
@@ -297,8 +299,10 @@ asciz_binary(<<C:8, Rest/binary>>, Acc) ->
 connect(Id, Host, undefined, User, Password, Database, Reconnect) ->
     connect(Id, Host, ?PORT, User, Password, Database, Reconnect);
 connect(Id, Host, Port, User, Password, Database, Reconnect) ->
+    connect(Id, Host, Port, User, Password, Database, Reconnect, []).
+connect(Id, Host, Port, User, Password, Database, Reconnect, SSLOpts) ->
     {ok, LogFun} = gen_server:call(?SERVER, get_logfun),
-    case p1_mysql_conn:start(Host, Port, User, Password, Database, LogFun) of
+    case p1_mysql_conn:start(Host, Port, User, Password, Database, LogFun, SSLOpts) of
 	{ok, ConnPid} ->
 	    MysqlConn =
 		case Reconnect of
@@ -310,7 +314,8 @@ connect(Id, Host, Port, User, Password, Database, Reconnect) ->
 					  port      = Port,
 					  user      = User,
 					  password  = Password,
-					  database  = Database
+					  database  = Database,
+					  ssl_opts = SSLOpts
 					 };
 		    false ->
 			#p1_mysql_connection{id        = Id,
@@ -383,7 +388,8 @@ init([Id, Host, Port, User, Password, Database, LogFun]) ->
 					  port      = Port,
 					  user      = User,
 					  password  = Password,
-					  database  = Database
+					  database  = Database,
+					     ssl_opts = []
 					 },
 	    case add_mysql_conn(MysqlConn, []) of
 		{ok, ConnList} ->
@@ -671,7 +677,8 @@ reconnect_loop(Conn, LogFun, N) when is_record(Conn, p1_mysql_connection) ->
 		 Conn#p1_mysql_connection.user,
 		 Conn#p1_mysql_connection.password,
 		 Conn#p1_mysql_connection.database,
-		 Conn#p1_mysql_connection.reconnect) of
+		 Conn#p1_mysql_connection.reconnect,
+		 Conn#p1_mysql_connection.ssl_opts) of
 	{ok, ConnPid} ->
 	    log(LogFun, debug, "p1_mysql_reconnect: Managed to reconnect to ~p:~s:~p (connection pid ~p)",
 		[Id, Host, Port, ConnPid]),

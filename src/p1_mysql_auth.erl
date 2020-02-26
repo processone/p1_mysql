@@ -16,7 +16,7 @@
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_conn' module)
 %%--------------------------------------------------------------------
--export([do_auth/9, password_sha2/2]).
+-export([do_auth/9, password_sha2/2, get_auth_head/2]).
 
 -include("p1_mysql_consts.hrl").
 
@@ -36,6 +36,13 @@
 %%====================================================================
 %% External functions
 %%====================================================================
+
+get_auth_head("old_auth", ExtraCaps) ->
+    make_auth_head(ExtraCaps);
+get_auth_head("mysql_native_password", ExtraCaps) ->
+    make_new_auth_head(none, "", ExtraCaps);
+get_auth_head(Type, ExtraCaps) ->
+    make_new_auth_head(none, Type, ExtraCaps).
 
 %%--------------------------------------------------------------------
 %% Function: do_auth(Type, Sock, RecvPid, SeqNum, User, Password, Salt1,
@@ -133,6 +140,9 @@ do_auth_switch(Type, _Sock, _RecvPid, _SeqNum, _Password, _Salt, LogFun) ->
 				      "authentication method ~s", [Type])),
     {error, Err}.
 
+do_publickey_auth({ssl, _} = Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
+    do_send(Sock, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum, LogFun),
+    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
 do_publickey_auth(Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
     do_send(Sock, <<2:8>>, SeqNum, LogFun),
     case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
@@ -187,38 +197,54 @@ password_old(Password, Salt) ->
 			     end, L)).
 
 %% part of do_old_auth/4, which is part of mysql_init/4
-make_auth(User, Password) ->
+make_auth_head(ExtraCaps) ->
     Caps = ?LONG_PASSWORD bor ?LONG_FLAG
-	bor ?TRANSACTIONS bor ?FOUND_ROWS,
+	   bor ?TRANSACTIONS bor ?FOUND_ROWS bor
+	   ExtraCaps,
     Maxsize = 0,
+    <<Caps:16/little, Maxsize:24/little>>.
+
+make_auth(User, Password) ->
+    Head = make_auth_head(0),
     UserB = list_to_binary(User),
     PasswordB = Password,
-    <<Caps:16/little, Maxsize:24/little, UserB/binary, 0:8,
-    PasswordB/binary>>.
+    <<Head/binary, UserB/binary, 0:8, PasswordB/binary>>.
 
 %% part of do_new_auth/4, which is part of mysql_init/4
-make_new_auth(User, Password, Database, AuthMethod) ->
-    {DBCaps, DatabaseB} = case Database of
-		 none ->
-		     {0, <<>>};
-		 _ ->
-		     {?CLIENT_CONNECT_WITH_DB,
-		      <<(list_to_binary(Database))/binary, 0>>}
-	     end,
-    {AuthCaps, AuthB} = case AuthMethod of
-			    "" -> {0, <<>>};
-			    _ -> {?CLIENT_PLUGIN_AUTH,
-				  <<(list_to_binary(AuthMethod))/binary, 0>>}
-	       end,
+make_new_auth_head(Database, AuthMethod, ExtraCaps) ->
+    DBCaps = case Database of
+			      none ->
+				  0;
+			      _ ->
+				  ?CLIENT_CONNECT_WITH_DB
+			  end,
+    AuthCaps = case AuthMethod of
+			    "" -> 0;
+			    _ -> ?CLIENT_PLUGIN_AUTH
+			end,
     Caps = ?CLIENT_LONG_PASSWORD bor ?CLIENT_LONG_FLAG bor
 	   ?CLIENT_TRANSACTIONS bor ?CLIENT_PROTOCOL_41 bor
 	   ?CLIENT_FOUND_ROWS bor ?CLIENT_RESERVED2 bor
-	   DBCaps bor AuthCaps,
+	   DBCaps bor AuthCaps bor ExtraCaps,
     Maxsize = ?MAX_PACKET_SIZE,
+    <<Caps:32/little, Maxsize:32/little, 8:8, 0:23/integer-unit:8>>.
+
+make_new_auth(User, Password, Database, AuthMethod) ->
+    Head = make_new_auth_head(Database, AuthMethod, 0),
+    DatabaseB = case Database of
+		 none ->
+		     <<>>;
+		 _ ->
+		     <<(list_to_binary(Database))/binary, 0>>
+	     end,
+    AuthB = case AuthMethod of
+			    "" -> <<>>;
+			    _ -> <<(list_to_binary(AuthMethod))/binary, 0>>
+	       end,
     UserB = list_to_binary(User),
     PasswordL = size(Password),
-    <<Caps:32/little, Maxsize:32/little, 8:8, 0:23/integer-unit:8,
-    UserB/binary, 0:8, PasswordL:8, Password/binary, DatabaseB/binary, AuthB/binary>>.
+    <<Head/binary, UserB/binary, 0:8, PasswordL:8, Password/binary,
+      DatabaseB/binary, AuthB/binary>>.
 
 hash(S) ->
     hash(S, 1345345333, 305419889, 7).
@@ -278,7 +304,7 @@ password_sha2(Password, Salt) ->
     <<(Stage1N bxor Stage3N):256>>.
 
 
-do_send(Sock, Packet, Num, LogFun) ->
+do_send({SockMod, Sock}, Packet, Num, LogFun) ->
     p1_mysql:log(LogFun, debug, "p1_mysql_auth send packet ~p: ~p", [Num, Packet]),
     Data = <<(size(Packet)):24/little, Num:8, Packet/binary>>,
-    gen_tcp:send(Sock, Data).
+    SockMod:send(Sock, Data).
