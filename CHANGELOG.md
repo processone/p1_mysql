@@ -1,3 +1,7 @@
+# Version 1.0.14
+
+* Add abilty to use ssl connections
+
 # Version 1.0.13
 
 * Update copyright year
