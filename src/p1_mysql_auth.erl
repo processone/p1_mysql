@@ -140,7 +140,7 @@ do_auth_switch(Type, _Sock, _RecvPid, _SeqNum, _Password, _Salt, LogFun) ->
 				      "authentication method ~s", [Type])),
     {error, Err}.
 
-do_publickey_auth({ssl, _} = Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
+do_publickey_auth({ssl, _} = Sock, RecvPid, SeqNum, Password, _Salt, LogFun) ->
     do_send(Sock, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum, LogFun),
     p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
 do_publickey_auth(Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
