@@ -1,3 +1,7 @@
+# Version 1.0.15
+
+* Fix warnings
+
 # Version 1.0.14
 
 * Add abilty to use ssl connections
