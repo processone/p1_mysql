@@ -31,7 +31,8 @@
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_conn' module)
 %%--------------------------------------------------------------------
--export([start_link/5
+-export([start_link/5,
+	 start_link/6
 	]).
 
 -include_lib("kernel/include/inet.hrl").
@@ -56,6 +57,7 @@
 %%           Port = integer()
 %%           LogFun = undefined | function() of arity 3
 %%           Parent = pid(), process that should get received frames
+%%           Options = [atom() | {atom{}, any{}}] gen_tcp options
 %% Descrip.: Start a process that connects to Host:Port and waits for
 %%           data. When it has received a MySQL frame, it sends it to
 %%           Parent and waits for the next frame.
@@ -65,11 +67,14 @@
 %%           Socket  = term(), gen_tcp socket
 %%           Reason  = atom() | string()
 %%--------------------------------------------------------------------
-start_link(Host, Port, ConnectTimeout, LogFun, Parent) when is_list(Host),
+start_link(Host, Port, ConnectTimeout, LogFun, Parent) ->
+    start_link(Host, Port, ConnectTimeout, LogFun, Parent, []).
+
+start_link(Host, Port, ConnectTimeout, LogFun, Parent, Options) when is_list(Host),
 							    is_integer(Port) ->
     RecvPid =
 	spawn_link(fun () ->
-			   init(Host, Port, LogFun, Parent)
+			   init(Host, Port, LogFun, Parent, Options)
 		   end),
     %% wait for the socket from the spawned pid
     receive
@@ -97,8 +102,8 @@ start_link(Host, Port, ConnectTimeout, LogFun, Parent) when is_list(Host),
 %% Descrip.: Connect to Host:Port and then enter receive-loop.
 %% Returns : error | never returns
 %%--------------------------------------------------------------------
-init(Host, Port, LogFun, Parent) ->
-    case connect(Host, Port) of
+init(Host, Port, LogFun, Parent, Options) ->
+    case connect(Host, Port, Options) of
 	{ok, Sock} ->
 	    Parent ! {p1_mysql_recv, self(), init, {ok, Sock}},
 	    State = #state{socket  = Sock,
@@ -182,22 +187,27 @@ sendpacket(Parent, Data) ->
 %%--------------------------------------------------------------------
 %% Connecting stuff
 %%--------------------------------------------------------------------
-connect(Host, Port) ->
+connect(Host, Port, Options) ->
     case lookup(Host) of
 	{ok, AddrsFamilies} ->
-	    do_connect(AddrsFamilies, Port, {error, nxdomain});
+	    do_connect(AddrsFamilies, Port, Options, {error, nxdomain});
 	{error, _} = Err ->
 	    Err
     end.
 
-do_connect([{IP, Family}|AddrsFamilies], Port, _Err) ->
-    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, Family]) of
+do_connect([{IP, Family}|AddrsFamilies], Port, Options, _Err) ->
+    SupportedOptions = inet:options() -- [binary,packet,inet,inet6],
+    OtherOpts = lists:filter(fun(Opt) ->
+	OptKey = case Opt of {K, _} -> K; K -> K end,
+	lists:member(OptKey, SupportedOptions)
+    end, Options),
+    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, Family | OtherOpts]) of
 	{ok, Sock} ->
 	    {ok, Sock};
 	{error, _} = Err ->
-	    do_connect(AddrsFamilies, Port, Err)
+	    do_connect(AddrsFamilies, Port, Options, Err)
     end;
-do_connect([], _Port, Err) ->
+do_connect([], _Port, _Options, Err) ->
     Err.
 
 lookup(Host) ->
