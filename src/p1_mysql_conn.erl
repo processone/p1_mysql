@@ -330,7 +330,7 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
 init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent, SSLOpts) ->
-    case p1_mysql_recv:start_link(Host, Port, ConnectTimeout, LogFun, self()) of
+    case p1_mysql_recv:start_link(Host, Port, ConnectTimeout, LogFun, self(), SSLOpts) of
 	{ok, RecvPid, Sock0} ->
 	    case mysql_init(Sock0, RecvPid, User, Password, LogFun, SSLOpts) of
 		{ok, {SockMod, RawSock} = Sock, Version} ->

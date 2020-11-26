@@ -1,3 +1,11 @@
+# Version 1.0.17
+
+* Support "gen_tcp" connect options (ie. keepalive, send_timeout, sndbuf, recbuf...) 
+
+# Version 1.0.16
+
+* Support OTP-23 on travis
+
 # Version 1.0.15
 
 * Fix warnings
