@@ -1,3 +1,7 @@
+# Version 1.0.17
+
+* Update travis config
+
 # Version 1.0.15
 
 * Fix warnings
