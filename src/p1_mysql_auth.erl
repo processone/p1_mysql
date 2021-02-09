@@ -212,12 +212,7 @@ make_auth(User, Password) ->
 
 %% part of do_new_auth/4, which is part of mysql_init/4
 make_new_auth_head(Database, AuthMethod, ExtraCaps) ->
-    DBCaps = case Database of
-			      none ->
-				  0;
-			      _ ->
-				  ?CLIENT_CONNECT_WITH_DB
-			  end,
+    DBCaps = 0,
     AuthCaps = case AuthMethod of
 			    "" -> 0;
 			    _ -> ?CLIENT_PLUGIN_AUTH
@@ -231,12 +226,7 @@ make_new_auth_head(Database, AuthMethod, ExtraCaps) ->
 
 make_new_auth(User, Password, Database, AuthMethod) ->
     Head = make_new_auth_head(Database, AuthMethod, 0),
-    DatabaseB = case Database of
-		 none ->
-		     <<>>;
-		 _ ->
-		     <<(list_to_binary(Database))/binary, 0>>
-	     end,
+    DatabaseB = <<>>,
     AuthB = case AuthMethod of
 			    "" -> <<>>;
 			    _ -> <<(list_to_binary(AuthMethod))/binary, 0>>
