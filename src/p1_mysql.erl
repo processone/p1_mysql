@@ -391,13 +391,13 @@ init([Id, Host, Port, User, Password, Database, LogFun]) ->
 					  database  = Database,
 					     ssl_opts = []
 					 },
-	    case add_mysql_conn(MysqlConn, []) of
+	    try add_mysql_conn(MysqlConn, []) of
 		{ok, ConnList} ->
 		    {ok, #state{log_fun    = LogFun,
 				conn_list = ConnList,
-                gc_tref = undefined
-			       }};
-		error ->
+				gc_tref = undefined
+			       }}
+	    catch _:_ ->
 		    Msg = "p1_mysql: Failed adding first MySQL connection handler to my list, exiting",
 		    log(LogFun, error, Msg),
 		    {error, Msg}
@@ -456,13 +456,13 @@ handle_call({fetch, Id, Query}, From, State) ->
 %%           Reason   = string()
 %%--------------------------------------------------------------------
 handle_call({add_mysql_connection, Conn}, _From, State) when is_record(Conn, p1_mysql_connection) ->
-    case add_mysql_conn(Conn, State#state.conn_list) of
+    try add_mysql_conn(Conn, State#state.conn_list) of
 	{ok, NewConnList} ->
 	    {Id, ConnPid} = {Conn#p1_mysql_connection.id, Conn#p1_mysql_connection.conn_pid},
 	    log(State#state.log_fun, normal, "p1_mysql: Added connection with id '~p' (pid ~p) to my list",
 		[Id, ConnPid]),
-	    {reply, ok, State#state{conn_list = NewConnList}};
-	error ->
+	    {reply, ok, State#state{conn_list = NewConnList}}
+    catch _:_ ->
 	    {reply, {error, "failed adding MySQL connection to my list"}, State}
     end;
 
