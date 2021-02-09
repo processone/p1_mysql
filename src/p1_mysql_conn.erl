@@ -549,13 +549,8 @@ greeting(Packet, LogFun) ->
     end.
 
 %% part of greeting/2
-asciz(Data) when is_binary(Data) ->
-    p1_mysql:asciz_binary(Data, []);
-asciz(Data) when is_list(Data) ->
-    {String, [0 | Rest]} = lists:splitwith(fun (C) ->
-						   C /= 0
-					   end, Data),
-    {String, Rest}.
+asciz(Data) ->
+    p1_mysql:asciz_binary(Data, []).
 
 %%--------------------------------------------------------------------
 %% Function: get_query_response(LogFun, RecvPid)
