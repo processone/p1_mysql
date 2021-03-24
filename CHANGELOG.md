@@ -1,3 +1,10 @@
+# Version 1.0.18
+
+* Update copyright year to 2021
+* add_mysql_conn always returns success, except if crashes
+* Database is always 'none', as noticed by Dialyzer
+* Data is always binary, as noticed by Dialyzer
+
 # Version 1.0.17
 
 * Update travis config
