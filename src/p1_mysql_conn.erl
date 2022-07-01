@@ -59,6 +59,7 @@
 %%%-------------------------------------------------------------------
 
 -module(p1_mysql_conn).
+-behavior(gen_server).
 
 -define(CONNECT_TIMEOUT, 5000).
 
@@ -74,8 +75,10 @@
 	 fetch/3,
 	 fetch/4,
 	 squery/4,
-	 stop/1
-	]).
+	 stop/1,
+	 init/1,
+	 handle_call/3,
+	 handle_cast/2, terminate/2, code_change/3, handle_info/2]).
 
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_auth' module)
@@ -85,14 +88,8 @@
 
 -include("p1_mysql.hrl").
 -include("p1_mysql_consts.hrl").
-
--record(state, {
-	  mysql_version,
-	  log_fun,
-	  recv_pid,
-	  socket,
-	  data
-	 }).
+-include("p1_mysql_state.hrl").
+-include_lib("kernel/include/inet.hrl").
 
 -define(SECURE_CONNECTION, 32768).
 -define(MYSQL_QUERY_OP, 3).
@@ -133,12 +130,9 @@ start(Host, Port, User, Password, Database, ConnectTimeout,
 		   is_list(User),
 		   is_list(Password),
 		   is_list(Database) ->
-    ConnPid = self(),
-    Pid = spawn(fun () ->
-			init(Host, Port, User, Password, Database,
-			     ConnectTimeout, LogFun, ConnPid, SSLOpts)
-		end),
-    post_start(Pid, ConnectTimeout, LogFun).
+    gen_server:start(?MODULE,[Host, Port, User, Password, Database,
+			     ConnectTimeout, LogFun, SSLOpts],
+		     [{timeout, ConnectTimeout}]).
 
 start_link(Host, Port, User, Password, Database, LogFun) ->
     start_link(Host, Port, User, Password, Database, ?CONNECT_TIMEOUT, LogFun).
@@ -154,40 +148,9 @@ start_link(Host, Port, User, Password, Database, ConnectTimeout,
 			is_list(User),
 			is_list(Password),
 			is_list(Database) ->
-    ConnPid = self(),
-    Pid = spawn_link(fun () ->
-			init(Host, Port, User, Password, Database,
-			     ConnectTimeout, LogFun, ConnPid, SSLOpts)
-		end),
-    post_start(Pid, ConnectTimeout, LogFun).
-
-%% part of start/6 or start_link/6:
-post_start(Pid, ConnectTimeout, _LogFun) ->
-    %%Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
-    %%TODO find a way to get configured Options here
-    Timeout = if is_integer(ConnectTimeout) -> ConnectTimeout;
-		 true -> ?DEFAULT_STANDALONE_TIMEOUT
-	      end,
-    receive
-	{p1_mysql_conn, Pid, ok} ->
-	    {ok, Pid};
-	{p1_mysql_conn, Pid, {error, Reason}} ->
-	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: post_start error ~p~n",
-		      [Reason]),
-	    stop(Pid),
-	    {error, Reason}
-%	Unknown ->
-%	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: Received unknown signal, exiting"),
-%	    p1_mysql:log(_LogFun, debug, "p1_mysql_conn: Unknown signal : ~p", [Unknown]),
-%	    {error, "unknown signal received"}
-    after Timeout ->
-	    p1_mysql:log(_LogFun, error, "p1_mysql_conn: post_start timeout~n",
-		      []),
-	    stop(Pid),
-	    timer:sleep(100),
-	    catch exit(Pid, kill),
-	    {error, "timed out"}
-    end.
+    gen_server:start_link(?MODULE, [Host, Port, User, Password, Database,
+				    ConnectTimeout, LogFun, SSLOpts],
+			  [{timeout, ConnectTimeout}]).
 
 %%--------------------------------------------------------------------
 %% Function: fetch(Pid, Query, From)
@@ -273,42 +236,62 @@ stop(Pid) ->
 %%
 %% Note    : Only to be used externally by the 'p1_mysql_auth' module.
 %%--------------------------------------------------------------------
-do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
-				      LogFun == undefined,
-				      SeqNum == undefined ->
-    receive
-        {p1_mysql_recv, RecvPid, data, Packet, Num} ->
-            %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: recv packet ~p:
-            %%~p", [Num, Packet]),
-	    {ok, Packet, Num};
-	{p1_mysql_recv, RecvPid, closed, _E} ->
-	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
-		      " socket was closed ~p~n", [{RecvPid, _E}]),
-	    {error, "p1_mysql_recv: socket was closed"};
-	close ->
-	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
-					" received close~n", []),
-	    {error, "p1_mysql_recv: socket was closed"}
+do_recv(LogFun, #state{data = Last} = State, SeqNum) when Last /= <<>> ->
+    case extract_packet(Last) of
+	{Packet, Num, Rest} ->
+	    {ok, Packet, Num, State#state{data = Rest}};
+	_ ->
+	    do_recv2(LogFun, State, SeqNum)
     end;
-do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
-				      LogFun == undefined,
-				      is_integer(SeqNum) ->
-    ResponseNum = SeqNum + 1,
-    receive
-        {p1_mysql_recv, RecvPid, data, Packet, ResponseNum} ->
-            %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: recv packet ~p:
-            %%~p", [ResponseNum, Packet]),
-	    {ok, Packet, ResponseNum};
-	{p1_mysql_recv, RecvPid, closed, _E} ->
-	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
-		      " socket was closed 2 ~p~n", [{RecvPid, _E}]),
-	    {error, "p1_mysql_recv: socket was closed"};
-	close ->
-	    p1_mysql:log(LogFun, error, "p1_mysql_conn: p1_mysql_recv:"
-					" received close~n", []),
-	    {error, "p1_mysql_recv: socket was closed"}
-        end.
+do_recv(LogFun, State, SeqNum) ->
+    do_recv2(LogFun, State, SeqNum).
 
+do_recv2(LogFun, #state{socket = {SockMod, Socket}, data = Last} = State, SeqNum) when is_function(LogFun);
+				      LogFun == undefined ->
+    case SockMod of
+	gen_tcp -> inet:setopts(Socket, [{active, once}]);
+	_ -> SockMod:setopts(Socket, [{active, once}])
+    end,
+    receive
+	close ->
+	    %ejabberd_sql:sql_query(<<"localhost">>, <<"select 1+1;">>).
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn:"
+					" received close~n", []),
+	    {error, "p1_mysql_recv: socket was closed"};
+	{T, Socket, Data} when T == tcp; T == ssl ->
+	    NewData = <<Last/binary, Data/binary>>,
+	    case extract_packet(NewData) of
+		{Packet, Num, Rest} ->
+		    {ok, Packet, Num, State#state{data = Rest}};
+		Rest ->
+		    do_recv(LogFun, State#state{data = Rest}, SeqNum)
+	    end;
+	{T, Sock, Reason} when T == tcp_error; T == ssl_error ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"Socket ~p closed : ~p", [Sock, Reason]),
+	    {error, "p1_mysql_recv: socket was closed"};
+	{T, Sock} when T == tcp_closed; T == ssl_closed ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+					"Socket ~p closed", [Sock]),
+	    {error, "p1_mysql_recv: socket was closed"};
+	Other ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: Other ~p~n", [Other]),
+	    {error, "p1_mysql_recv: socket was closed"}
+    end.
+
+extract_packet(Data) ->
+    case Data of
+	<<Length:24/little, Num:8, D/binary>> ->
+	    if
+		Length =< size(D) ->
+		    {Packet, Rest} = split_binary(D, Length),
+		    {Packet, Num, Rest};
+		true ->
+		    Data
+	    end;
+	_ ->
+	    Data
+    end.
 
 %%====================================================================
 %% Internal functions
@@ -329,99 +312,97 @@ do_recv(LogFun, RecvPid, SeqNum) when is_function(LogFun);
 %%           we were successfull.
 %% Returns : void() | does not return
 %%--------------------------------------------------------------------
-init(Host, Port, User, Password, Database, ConnectTimeout, LogFun, Parent, SSLOpts) ->
-    case p1_mysql_recv:start_link(Host, Port, ConnectTimeout, LogFun, self()) of
-	{ok, RecvPid, Sock0} ->
-	    case mysql_init(Sock0, RecvPid, User, Password, LogFun, SSLOpts) of
-		{ok, {SockMod, RawSock} = Sock, Version} ->
-		    case do_query(Sock, RecvPid, LogFun, "use " ++ Database,
-				  Version, [{result_type, binary}]) of
+init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
+    case connect(Host, Port, LogFun, ConnectTimeout) of
+	{ok, Sock0} ->
+	    State = #state{socket = {gen_tcp, Sock0},
+			   log_fun = LogFun,
+			   data = <<>>},
+	    case mysql_init(State, User, Password, LogFun, SSLOpts) of
+		{ok, NState} ->
+		    case do_query(NState, "use " ++ Database, [{result_type, binary}]) of
 			{error, MySQLRes} ->
 			    p1_mysql:log(LogFun, error,
 				      "p1_mysql_conn: Failed changing"
 				      " to database ~p : ~p",
 				      [Database,
 				       p1_mysql:get_result_reason(MySQLRes)]),
-			    SockMod:close(RawSock),
-			    Parent ! {p1_mysql_conn, self(),
-				      {error, failed_changing_database}};
+			    case NState of
+				#state{socket = {SockMod, RawSock}} ->
+				    SockMod:close(RawSock);
+				_ -> ok
+			    end,
+			    {error, failed_changing_database};
 			%% ResultType: data | updated
-			{_ResultType, _MySQLRes} ->
-			    Parent ! {p1_mysql_conn, self(), ok},
-			    State = #state{mysql_version=Version,
-					   recv_pid = RecvPid,
-					   socket   = Sock,
-					   log_fun  = LogFun,
-					   data     = <<>>
-					  },
-			    loop(State)
+			{_ResultType, _MySQLRes, NState2} ->
+			    {ok, NState2}
 		    end;
-		{error, _Reason} ->
-		    Parent ! {p1_mysql_conn, self(), {error, login_failed}}
+		{error, _Reason} = E ->
+		    E
 	    end;
 	E ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 		      "Failed connecting to ~p:~p : ~p",
 		      [Host, Port, E]),
-	    Parent ! {p1_mysql_conn, self(), {error, connect_failed}}
+	    {error, connect_failed}
     end.
 
-%%--------------------------------------------------------------------
-%% Function: loop(State)
-%%           State = state record()
-%% Descrip.: Wait for signals asking us to perform a MySQL query, or
-%%           signals that the socket was closed.
-%% Returns : error | does not return
-%%--------------------------------------------------------------------
-loop(State) ->
-    RecvPid = State#state.recv_pid,
-    receive
-	{fetch, Ref, Query, GenSrvFrom, Options} ->
-	    %% GenSrvFrom is either a gen_server:call/3 From term(),
-	    %% or a pid if no gen_server was used to make the query
-	    Res = do_query(State, Query, Options),
-	    case is_pid(GenSrvFrom) of
-		true ->
-		    %% The query was not sent using gen_server mechanisms
-		    GenSrvFrom ! {fetch_result, Ref, self(), Res};
-		false ->
-		    %% the timer is canceled in wait_fetch_result/2, but we wait on that funtion only if the query
-		    %% was not sent using the mysql gen_server. So we at least should try to cancel the timer here
-		    %% (no warranty, the gen_server can still receive timeout messages)
-		    erlang:cancel_timer(Ref),
-		    gen_server:reply(GenSrvFrom, Res)
-	    end,
-	    case Res of
-		{error, #p1_mysql_result{error="p1_mysql_recv: socket was closed"}} ->
-		    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
-							     "Connection closed, exiting.", []),
-		    close_connection(State);
-		_ ->
-		    loop(State)
-	    end;
-	{p1_mysql_recv, RecvPid, data, Packet, Num} ->
+handle_call(_Request, _From, #state{log_fun = LogFun} = State) ->
+    p1_mysql:log(LogFun, error, "Unhandled call ~p",
+		 [_Request]),
+    {reply, {error, badarg}, State}.
+
+handle_cast(_Request, #state{log_fun = LogFun} = State) ->
+    p1_mysql:log(LogFun, error, "Unhandled cast ~p",
+		 [_Request]),
+    {noreply, State}.
+
+handle_info({fetch, Ref, Query, GenSrvFrom, Options}, State) ->
+    %% GenSrvFrom is either a gen_server:call/3 From term(),
+    %% or a pid if no gen_server was used to make the query
+    {NState, Res} =
+    case do_query(State, Query, Options) of
+	{error, R} -> {State, R};
+	{T, R, S} -> {S, {T, R}}
+    end,
+    case is_pid(GenSrvFrom) of
+	true ->
+	    %% The query was not sent using gen_server mechanisms
+	    GenSrvFrom ! {fetch_result, Ref, self(), Res};
+	false ->
+	    %% the timer is canceled in wait_fetch_result/2, but we wait on that funtion only if the query
+	    %% was not sent using the mysql gen_server. So we at least should try to cancel the timer here
+	    %% (no warranty, the gen_server can still receive timeout messages)
+	    erlang:cancel_timer(Ref),
+	    gen_server:reply(GenSrvFrom, Res)
+    end,
+    case Res of
+	{error, #p1_mysql_result{error = "p1_mysql_recv: socket was closed"}} ->
 	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
-		      "Received MySQL data when not expecting any "
-		      "(num ~p) - ignoring it", [Num]),
-	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
-		      "Unexpected MySQL data (num ~p) :~n~p",
-		      [Num, Packet]),
-	    loop(State);
-        {p1_mysql_recv, RecvPid, closed, _Reason} ->
-            p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
-                         "Connection closed, exiting.", []),
-            close_connection(State);
-	close ->
-	    p1_mysql:log(State#state.log_fun, info, "p1_mysql_conn: "
-		      "Received close signal, exiting.", []),
-	    close_connection(State);
-        Unknown ->
-	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
-		      "Received unknown signal, exiting : ~p",
-		      [Unknown]),
-	    close_connection(State),
-	    error
-    end.
+						     "Connection closed, exiting.", []),
+	    {stop, normal, State};
+	_ ->
+	    {noreply, NState}
+    end;
+handle_info(close, State) ->
+    p1_mysql:log(State#state.log_fun, info, "p1_mysql_conn: "
+					    "Received close signal, exiting.", []),
+    {stop, normal, State};
+handle_info(Unknown, State) ->
+    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
+					     "Received unknown signal, exiting : ~p",
+		 [Unknown]),
+    {stop, normal, State}.
+
+terminate(_Reason, State) ->
+    {SockMod, Socket} = State#state.socket,
+    Result = SockMod:close(Socket),
+    p1_mysql:log(State#state.log_fun, normal, "Closing connection ~p: ~p~n",
+		 [State#state.socket, Result]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
 %%--------------------------------------------------------------------
 %% Function: mysql_init(Sock, RecvPid, User, Password, LogFun)
@@ -434,9 +415,9 @@ loop(State) ->
 %% Returns : {ok, SockPair, Version} | {error, Reason}
 %%           Reason = string()
 %%--------------------------------------------------------------------
-mysql_init(Sock, RecvPid, User, Password, LogFun, SSLOpts) ->
-    case do_recv(LogFun, RecvPid, undefined) of
-	{ok, Packet, InitSeqNum} ->
+mysql_init(State, User, Password, LogFun, SSLOpts) ->
+    case do_recv(LogFun, State, undefined) of
+	{ok, Packet, InitSeqNum, NState} ->
 	    {Version, Salt, Caps, AuthPlug} = greeting(Packet, LogFun),
 	    case Caps band ?CLIENT_SSL of
 		0 ->
@@ -447,21 +428,21 @@ mysql_init(Sock, RecvPid, User, Password, LogFun, SSLOpts) ->
 					 []),
 			    {error, "SSL not available"};
 			false ->
-			    authenticate({gen_tcp, Sock}, RecvPid, User, Password, LogFun,
+			    authenticate(NState, User, Password, LogFun,
 					 InitSeqNum, Version, Salt, Caps, AuthPlug)
 		    end;
 		_ ->
 		    case proplists:get_bool(ssl, SSLOpts) orelse proplists:get_bool(ssl_required, SSLOpts) of
 			true ->
-			    case start_ssl(Sock, RecvPid, LogFun, InitSeqNum+1, AuthPlug) of
-				{ok, NewSock} ->
-				    authenticate(NewSock, RecvPid, User, Password, LogFun,
+			    case start_ssl(NState, LogFun, InitSeqNum+1, AuthPlug) of
+				{ok, NewState} ->
+				    authenticate(NewState, User, Password, LogFun,
 						 InitSeqNum+1, Version, Salt, Caps, AuthPlug);
 				{error, Reason} ->
 				    {error, Reason}
 			    end;
 			_ ->
-			    authenticate({gen_tcp, Sock}, RecvPid, User, Password, LogFun,
+			    authenticate(NState, User, Password, LogFun,
 					 InitSeqNum, Version, Salt, Caps, AuthPlug)
 		    end
 	    end;
@@ -471,37 +452,36 @@ mysql_init(Sock, RecvPid, User, Password, LogFun, SSLOpts) ->
 
 %% part of mysql_init/4
 
-start_ssl(Sock, RecvPid, LogFun, SeqNum, AuthPlug) ->
+start_ssl(#state{socket = {_, Sock}} = State, LogFun, SeqNum, AuthPlug) ->
     Packet = p1_mysql_auth:get_auth_head(AuthPlug, ?CLIENT_SSL),
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
     p1_mysql:log(LogFun, debug, "p1_mysql_conn send start ssl ~p: ~p", [SeqNum, Packet]),
     gen_tcp:send(Sock, Data),
-    RecvPid ! {start_ssl},
-    receive
-	{p1_mysql_recv, RecvPid, ssl, {ok, SSLSock}} ->
-	    {ok, {ssl, SSLSock}};
-	{p1_mysql_recv, RecvPid, ssl, {error, Reason}} ->
+    case ssl:connect(Sock, [binary, {packet, 0}]) of
+	{ok, SSLSock} ->
+	    {ok, State#state{socket = SSLSock}};
+	{error, Reason} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 					"ssl start failed: ~p~n",
 			 [Reason]),
 	    {error, "ssl failed"}
     end.
 
-authenticate(Sock, RecvPid, User, Password, LogFun, SeqNum,
+authenticate(State, User, Password, LogFun, SeqNum,
 	     Version, Salt, Caps, AuthPlug) ->
-    AuthRes = p1_mysql_auth:do_auth(AuthPlug, Sock, RecvPid,
+    AuthRes = p1_mysql_auth:do_auth(AuthPlug, State,
 				    SeqNum + 1,
 				    User, Password,
 				    Salt, Caps, LogFun),
     case AuthRes of
-	{ok, <<0:8, _Rest/binary>>, _RecvNum} ->
-	    {ok, Sock, Version};
-	{ok, <<255:8, Code:16/little, Message/binary>>, _RecvNum} ->
+	{ok, <<0:8, _Rest/binary>>, _RecvNum, NState} ->
+	    {ok, NState#state{mysql_version = Version}};
+	{ok, <<255:8, Code:16/little, Message/binary>>, _RecvNum, _NState} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 					"init error ~p: ~p~n",
 			 [Code, binary_to_list(Message)]),
 	    {error, binary_to_list(Message)};
-	{ok, RecvPacket, _RecvNum} ->
+	{ok, RecvPacket, _RecvNum, _NState} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 					"init unknown error ~p~n",
 			 [binary_to_list(RecvPacket)]),
@@ -566,9 +546,9 @@ asciz(Data) ->
 %%           AffectedRows = int()
 %%           Reason       = term()
 %%--------------------------------------------------------------------
-get_query_response(LogFun, RecvPid, Version, Options) ->
-    case do_recv(LogFun, RecvPid, undefined) of
-	{ok, <<Fieldcount:8, Rest/binary>>, _} ->
+get_query_response(LogFun, State, Version, Options) ->
+    case do_recv(LogFun, State, undefined) of
+	{ok, <<Fieldcount:8, Rest/binary>>, _, NState} ->
 	    case Fieldcount of
 		0 ->
 		    %% No Tabular data
@@ -578,19 +558,19 @@ get_query_response(LogFun, RecvPid, Version, Options) ->
 			<<16#fe, Value:64/little, _/binary>> -> Value;
 			<<Value:8, _/binary>> -> Value
 		    end,
-		    {updated, #p1_mysql_result{affectedrows=AffectedRows}};
+		    {updated, #p1_mysql_result{affectedrows=AffectedRows}, NState};
 		255 ->
 		    <<_Code:16/little, Message/binary>>  = Rest,
 		    {error, #p1_mysql_result{error=binary_to_list(Message)}};
 		_ ->
 		    %% Tabular data received
                     ResultType = get_option(result_type, Options, ?DEFAULT_RESULT_TYPE),
-		    case get_fields(LogFun, RecvPid, [], Version, ResultType) of
-			{ok, Fields} ->
-			    case get_rows(Fieldcount, LogFun, RecvPid, ResultType, []) of
-				{ok, Rows} ->
+		    case get_fields(LogFun, NState, [], Version, ResultType) of
+			{ok, Fields, NState2} ->
+			    case get_rows(Fieldcount, LogFun, NState2, ResultType, []) of
+				{ok, Rows, NState3} ->
 				    {data, #p1_mysql_result{fieldinfo=Fields,
-							 rows=Rows}};
+							 rows=Rows}, NState3};
 				{error, Reason} ->
 				    {error, #p1_mysql_result{error=Reason}}
 			    end;
@@ -614,14 +594,14 @@ get_query_response(LogFun, RecvPid, Version, Options) ->
 %%           Reason    = term()
 %%--------------------------------------------------------------------
 %% Support for MySQL 4.0.x:
-get_fields(LogFun, RecvPid, Res, ?MYSQL_4_0, ResultType) ->
-    case do_recv(LogFun, RecvPid, undefined) of
-	{ok, Packet, _Num} ->
+get_fields(LogFun, State, Res, ?MYSQL_4_0, ResultType) ->
+    case do_recv(LogFun, State, undefined) of
+	{ok, Packet, _Num, NState} ->
 	    case Packet of
 		<<254:8>> ->
-		    {ok, lists:reverse(Res)};
+		    {ok, lists:reverse(Res), NState};
 		<<254:8, Rest/binary>> when size(Rest) < 8 ->
-		    {ok, lists:reverse(Res)};
+		    {ok, lists:reverse(Res), NState};
 		_ ->
 		    {Table, Rest} = get_with_length(Packet),
 		    {Field, Rest2} = get_with_length(Rest),
@@ -641,21 +621,21 @@ get_fields(LogFun, RecvPid, Res, ?MYSQL_4_0, ResultType) ->
                        ResultType == binary ->
                             This = {Table, Field, Length, Type}
                     end,
-		    get_fields(LogFun, RecvPid, [This | Res],
+		    get_fields(LogFun, NState, [This | Res],
                                ?MYSQL_4_0, ResultType)
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
     end;
 %% Support for MySQL 4.1.x and 5.x:
-get_fields(LogFun, RecvPid, Res, ?MYSQL_4_1, ResultType) ->
-    case do_recv(LogFun, RecvPid, undefined) of
-	{ok, Packet, _Num} ->
+get_fields(LogFun, State, Res, ?MYSQL_4_1, ResultType) ->
+    case do_recv(LogFun, State, undefined) of
+	{ok, Packet, _Num, NState} ->
 	    case Packet of
 		<<254:8>> ->
-		    {ok, lists:reverse(Res)};
+		    {ok, lists:reverse(Res), NState};
 		<<254:8, Rest/binary>> when size(Rest) < 8 ->
-		    {ok, lists:reverse(Res)};
+		    {ok, lists:reverse(Res), NState};
 		_ ->
 		    {_Catalog, Rest} = get_with_length(Packet),
 		    {_Database, Rest2} = get_with_length(Rest),
@@ -679,7 +659,7 @@ get_fields(LogFun, RecvPid, Res, ?MYSQL_4_1, ResultType) ->
                             This = {Table, Field, Length,
                                     get_field_datatype(Type)}
                     end,
-		    get_fields(LogFun, RecvPid, [This | Res],
+		    get_fields(LogFun, NState, [This | Res],
                                ?MYSQL_4_1, ResultType)
 	    end;
 	{error, Reason} ->
@@ -696,15 +676,15 @@ get_fields(LogFun, RecvPid, Res, ?MYSQL_4_1, ResultType) ->
 %%           {error, Reason}
 %%           Rows = list() of [string()]
 %%--------------------------------------------------------------------
-get_rows(N, LogFun, RecvPid, ResultType, Res) ->
-    case do_recv(LogFun, RecvPid, undefined) of
-	{ok, Packet, _Num} ->
+get_rows(N, LogFun, State, ResultType, Res) ->
+    case do_recv(LogFun, State, undefined) of
+	{ok, Packet, _Num, NState} ->
 	    case Packet of
 		<<254:8, Rest/binary>> when size(Rest) < 8 ->
-		    {ok, lists:reverse(Res)};
+		    {ok, lists:reverse(Res), NState};
 		_ ->
 		    {ok, This} = get_row(N, Packet, ResultType, []),
-		    get_rows(N, LogFun, RecvPid, ResultType, [This | Res])
+		    get_rows(N, LogFun, NState, ResultType, [This | Res])
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
@@ -740,14 +720,6 @@ get_with_length(<<254:8, Length:64/little, Rest/binary>>) ->
 get_with_length(<<Length:8, Rest/binary>>) when Length < 251 ->
     split_binary(Rest, Length).
 
-close_connection(State) ->
-    {SockMod, Socket} = State#state.socket,
-    Result = SockMod:close(Socket),
-    p1_mysql:log(State#state.log_fun,  normal, "Closing connection ~p: ~p~n",
-	      [State#state.socket, Result]),
-    Result.
-
-
 %%--------------------------------------------------------------------
 %% Function: do_query(State, Query)
 %%           do_query(Sock, RecvPid, LogFun, Query)
@@ -758,21 +730,12 @@ close_connection(State) ->
 %% Descrip.: Send a MySQL query and block awaiting it's response.
 %% Returns : result of get_query_response/2 | {error, Reason}
 %%--------------------------------------------------------------------
-do_query(State, Query, Options) when is_record(State, state) ->
-    do_query(State#state.socket,
-	     State#state.recv_pid,
-	     State#state.log_fun,
-	     Query,
-	     State#state.mysql_version,
-	     Options
-	    ).
-
-do_query(Sock, RecvPid, LogFun, Query, Version, Options) when is_pid(RecvPid),
-							      (is_list(Query) or is_binary(Query)) ->
+do_query(#state{socket = Sock, log_fun = LogFun, mysql_version = Version} = State,
+	 Query, Options) when (is_list(Query) or is_binary(Query)) ->
     Packet = list_to_binary([?MYSQL_QUERY_OP, Query]),
     case do_send(Sock, Packet, 0, LogFun) of
 	ok ->
-	    get_query_response(LogFun, RecvPid, Version, Options);
+	    get_query_response(LogFun, State, Version, Options);
 	{error, Reason} ->
 	    Msg = io_lib:format("Failed sending data on socket : ~p", [Reason]),
 	    {error, Msg}
@@ -790,8 +753,8 @@ do_query(Sock, RecvPid, LogFun, Query, Version, Options) when is_pid(RecvPid),
 do_send({SockMod, Sock}, Packet, SeqNum, _LogFun) when is_binary(Packet),
 					    is_integer(SeqNum) ->
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
-    %%p1_mysql:log(LogFun, debug, "p1_mysql_conn: send packet ~p: ~p",
-    %%[SeqNum, Data]),
+    %p1_mysql:log(_LogFun, debug, "p1_mysql_conn: send packet ~p: ~p",
+    %[SeqNum, Data]),
     SockMod:send(Sock, Data).
 
 %%--------------------------------------------------------------------
@@ -842,4 +805,79 @@ get_option(Key, Options, Default) ->
 	    Value;
 	false ->
 	    Default
+    end.
+
+%%--------------------------------------------------------------------
+%% Connecting stuff
+%%--------------------------------------------------------------------
+connect(Host, Port, LogFun, Timeout) ->
+    case lookup(Host, Timeout) of
+	{ok, AddrsFamilies} ->
+	    do_connect(AddrsFamilies, Port, {error, nxdomain}, Timeout);
+	{error, E} ->
+	    Reason = format_inet_error(E),
+	    p1_mysql:log(LogFun, error,
+			 "p1_mysql_conn: Failed connecting to ~s:~p: ~s",
+			 [Host, Port, Reason]),
+	    Msg = lists:flatten(io_lib:format("connect failed: ~s", [Reason])),
+	    {error, Msg}
+    end.
+
+do_connect([{IP, Family}|AddrsFamilies], Port, _Err, Timeout) ->
+    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, {active, false}, Family], Timeout) of
+	{ok, Sock} ->
+	    {ok, Sock};
+	{error, _} = Err ->
+	    do_connect(AddrsFamilies, Port, Err, Timeout)
+    end;
+do_connect([], _Port, Err, _Timeout) ->
+    Err.
+
+lookup(Host, Timeout) ->
+    case inet:parse_address(Host) of
+	{ok, IP} ->
+	    {ok, [{IP, get_addr_type(IP)}]};
+	{error, _} ->
+	    do_lookup([{Host, Family} || Family <- [inet6, inet]],
+		      [], {error, nxdomain}, Timeout)
+    end.
+
+do_lookup([{Host, Family}|HostFamilies], AddrFamilies, Err, Timeout) ->
+    case inet:gethostbyname(Host, Family, Timeout) of
+	{ok, HostEntry} ->
+	    Addrs = host_entry_to_addrs(HostEntry),
+	    AddrFamilies1 = [{Addr, Family} || Addr <- Addrs],
+	    do_lookup(HostFamilies,
+		      AddrFamilies ++ AddrFamilies1,
+		      Err, Timeout);
+	{error, _} = Err1 ->
+	    do_lookup(HostFamilies, AddrFamilies, Err1, Timeout)
+    end;
+do_lookup([], [], Err, _Timeout) ->
+    Err;
+do_lookup([], AddrFamilies, _Err, _Timeout) ->
+    {ok, AddrFamilies}.
+
+host_entry_to_addrs(#hostent{h_addr_list = AddrList}) ->
+    lists:filter(
+	fun(Addr) ->
+	    try get_addr_type(Addr) of
+		_ -> true
+	    catch _:badarg ->
+		false
+	    end
+	end, AddrList).
+
+get_addr_type({_, _, _, _}) -> inet;
+get_addr_type({_, _, _, _, _, _, _, _}) -> inet6;
+get_addr_type(_) -> erlang:error(badarg).
+
+format_inet_error(closed) ->
+    "connection closed";
+format_inet_error(timeout) ->
+    format_inet_error(etimedout);
+format_inet_error(Reason) ->
+    case inet:format_error(Reason) of
+	"unknown POSIX error" -> atom_to_list(Reason);
+	Txt -> Txt
     end.

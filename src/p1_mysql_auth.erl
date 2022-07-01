@@ -16,9 +16,10 @@
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_conn' module)
 %%--------------------------------------------------------------------
--export([do_auth/9, password_sha2/2, get_auth_head/2]).
+-export([do_auth/8, password_sha2/2, get_auth_head/2]).
 
 -include("p1_mysql_consts.hrl").
+-include("p1_mysql_state.hrl").
 
 %%--------------------------------------------------------------------
 %% Macros
@@ -59,31 +60,31 @@ get_auth_head(Type, ExtraCaps) ->
 %% Descrip.: Perform MySQL authentication.
 %% Returns : result of p1_mysql_conn:do_recv/3
 %%--------------------------------------------------------------------
-do_auth("old_auth", Sock, RecvPid, SeqNum, User, Password,
+do_auth("old_auth", State, SeqNum, User, Password,
 	Salt, _Caps, LogFun) ->
     Auth = password_old(Password, Salt),
     Packet2 = make_auth(User, Auth),
-    do_send(Sock, Packet2, SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
-do_auth("mysql_native_password", Sock, RecvPid, SeqNum, User, Password,
+    do_send(State, Packet2, SeqNum, LogFun),
+    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
+do_auth("mysql_native_password", State, SeqNum, User, Password,
 	Salt, Caps, LogFun) when Caps band ?CLIENT_PLUGIN_AUTH == 0 ->
     Auth = password_new(Password, Salt),
     Packet2 = make_new_auth(User, Auth, none, ""),
-    do_send(Sock, Packet2, SeqNum, LogFun),
-    case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
-	{ok, Packet3, SeqNum2} ->
+    do_send(State, Packet2, SeqNum, LogFun),
+    case p1_mysql_conn:do_recv(LogFun, State, SeqNum) of
+	{ok, Packet3, SeqNum2, NState} ->
 	    case Packet3 of
 		<<254:8>> ->
 		    AuthOld = password_old(Password, string:substr(Salt, 1, 8)),
-		    do_send(Sock, <<AuthOld/binary, 0:8>>, SeqNum2 + 1, LogFun),
-		    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum2 + 1);
+		    do_send(NState, <<AuthOld/binary, 0:8>>, SeqNum2 + 1, LogFun),
+		    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2 + 1);
 		_ ->
-		    {ok, Packet3, SeqNum2}
+		    {ok, Packet3, SeqNum2, NState}
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
     end;
-do_auth(Type, Sock, RecvPid, SeqNum, User, Password,
+do_auth(Type, State, SeqNum, User, Password,
 	Salt, Caps, LogFun)
     when Caps band ?CLIENT_PLUGIN_AUTH /= 0 andalso
 	 (Type == "mysql_native_password" orelse
@@ -95,9 +96,9 @@ do_auth(Type, Sock, RecvPid, SeqNum, User, Password,
 		   password_sha2(Password, Salt)
 	   end,
     Packet2 = make_new_auth(User, Auth, none, Type),
-    do_send(Sock, Packet2, SeqNum, LogFun),
-    case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
-	{ok, Packet3, SeqNum2} ->
+    do_send(State, Packet2, SeqNum, LogFun),
+    case p1_mysql_conn:do_recv(LogFun, State, SeqNum) of
+	{ok, Packet3, SeqNum2, NState} ->
 	    case Packet3 of
 		<<254:8, Rest/binary>> ->
 		    {TypeNew, SaltNew} = p1_mysql:asciz_binary(Rest, []),
@@ -106,20 +107,20 @@ do_auth(Type, Sock, RecvPid, SeqNum, User, Password,
 		    p1_mysql:log(LogFun, debug, "p1_mysql_auth: do_auth: "
 						"Protocol change ~p ~p",
 				 [TypeNew, SaltNew2]),
-		    do_auth_switch(TypeNew, Sock, RecvPid, SeqNum2 + 1,
+		    do_auth_switch(TypeNew, NState, SeqNum2 + 1,
 				   Password, SaltNew2, LogFun);
 		<<1:8, 4:8>> ->
-		    do_publickey_auth(Sock, RecvPid, SeqNum2 + 1,
+		    do_publickey_auth(NState, SeqNum2 + 1,
 				      Password, Salt, LogFun);
 		<<1:8, 3:8>> ->
-		    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum2);
+		    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2);
 		_ ->
-		    {ok, Packet3, SeqNum2}
+		    {ok, Packet3, SeqNum2, NState}
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
     end;
-do_auth(Type, _Sock, _RecvPid, _SeqNum, _User, _Password,
+do_auth(Type, _State, _SeqNum, _User, _Password,
 	_Salt, _Caps, LogFun) ->
     p1_mysql:log(LogFun, error, "p1_mysql_auth: do_auth: "
 				"Unknown authentication method ~s", [Type]),
@@ -127,26 +128,26 @@ do_auth(Type, _Sock, _RecvPid, _SeqNum, _User, _Password,
 				      "authentication method ~s", [Type])),
     {error, Err}.
 
-do_auth_switch("mysql_native_password", Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
-    do_send(Sock, password_new(Password, Salt), SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
-do_auth_switch("caching_sha2_password", Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
-    do_send(Sock, password_sha2(Password, Salt), SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
-do_auth_switch(Type, _Sock, _RecvPid, _SeqNum, _Password, _Salt, LogFun) ->
+do_auth_switch("mysql_native_password", State, SeqNum, Password, Salt, LogFun) ->
+    do_send(State, password_new(Password, Salt), SeqNum, LogFun),
+    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
+do_auth_switch("caching_sha2_password", State, SeqNum, Password, Salt, LogFun) ->
+    do_send(State, password_sha2(Password, Salt), SeqNum, LogFun),
+    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
+do_auth_switch(Type, _Sock, _SeqNum, _Password, _Salt, LogFun) ->
     p1_mysql:log(LogFun, error, "p1_mysql_auth: do_auth_switch: "
 				"Unknown authentication method ~s", [Type]),
     Err = lists:flatten(io_lib:format("p1_mysql_auth: Server request switch to unknown "
 				      "authentication method ~s", [Type])),
     {error, Err}.
 
-do_publickey_auth({ssl, _} = Sock, RecvPid, SeqNum, Password, _Salt, LogFun) ->
-    do_send(Sock, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum);
-do_publickey_auth(Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
-    do_send(Sock, <<2:8>>, SeqNum, LogFun),
-    case p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum) of
-	{ok, <<1:8, PublicKey/binary>>, SeqNum2} ->
+do_publickey_auth(#state{socket = {ssl, _}} = State, SeqNum, Password, _Salt, LogFun) ->
+    do_send(State, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum, LogFun),
+    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
+do_publickey_auth(State, SeqNum, Password, Salt, LogFun) ->
+    do_send(State, <<2:8>>, SeqNum, LogFun),
+    case p1_mysql_conn:do_recv(LogFun, State, SeqNum) of
+	{ok, <<1:8, PublicKey/binary>>, SeqNum2, NState} ->
 	    case public_key:pem_decode(PublicKey) of
 		[{'SubjectPublicKeyInfo', _, _} = KeyInfo | _] ->
 		    Key = public_key:pem_entry_decode(KeyInfo),
@@ -159,14 +160,14 @@ do_publickey_auth(Sock, RecvPid, SeqNum, Password, Salt, LogFun) ->
 		    Xor = <<(PassN bxor SaltN):PLenBits>>,
 		    Encrypted = public_key:encrypt_public(Xor, Key,
 							  [{rsa_pad, rsa_pkcs1_oaep_padding}]),
-		    do_send(Sock, Encrypted, SeqNum2+1, LogFun),
-		    p1_mysql_conn:do_recv(LogFun, RecvPid, SeqNum2+1);
+		    do_send(NState, Encrypted, SeqNum2+1, LogFun),
+		    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2+1);
 		_ ->
 		    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
 						"Can't decode public key", []),
 		    {error, "p1_mysql_auth: do_publickey_auth: Can't decode public key"}
 	    end;
-	{ok, PacketUnk, _} ->
+	{ok, PacketUnk, _, _} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
 					"Unknown response to public key request ~p", [PacketUnk]),
 	    {error, "p1_mysql_auth: Unknown response to public key request"};
@@ -294,7 +295,7 @@ password_sha2(Password, Salt) ->
     <<(Stage1N bxor Stage3N):256>>.
 
 
-do_send({SockMod, Sock}, Packet, Num, LogFun) ->
+do_send(#state{socket = {SockMod, Sock}}, Packet, Num, LogFun) ->
     p1_mysql:log(LogFun, debug, "p1_mysql_auth send packet ~p: ~p", [Num, Packet]),
     Data = <<(size(Packet)):24/little, Num:8, Packet/binary>>,
     SockMod:send(Sock, Data).
