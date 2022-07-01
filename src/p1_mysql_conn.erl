@@ -332,19 +332,19 @@ init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
 				    SockMod:close(RawSock);
 				_ -> ok
 			    end,
-			    {error, failed_changing_database};
+			    {stop, failed_changing_database};
 			%% ResultType: data | updated
 			{_ResultType, _MySQLRes, NState2} ->
 			    {ok, NState2}
 		    end;
-		{error, _Reason} = E ->
-		    E
+		{error, Reason} ->
+		    {stop, Reason}
 	    end;
 	E ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 		      "Failed connecting to ~p:~p : ~p",
 		      [Host, Port, E]),
-	    {error, connect_failed}
+	    {stop, connect_failed}
     end.
 
 handle_call(_Request, _From, #state{log_fun = LogFun} = State) ->
@@ -362,7 +362,7 @@ handle_info({fetch, Ref, Query, GenSrvFrom, Options}, State) ->
     %% or a pid if no gen_server was used to make the query
     {NState, Res} =
     case do_query(State, Query, Options) of
-	{error, R} -> {State, R};
+	{error, R} -> {State, {error, R}};
 	{T, R, S} -> {S, {T, R}}
     end,
     case is_pid(GenSrvFrom) of
