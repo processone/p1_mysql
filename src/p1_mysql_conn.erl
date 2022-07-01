@@ -327,11 +327,8 @@ init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
 				      " to database ~p : ~p",
 				      [Database,
 				       p1_mysql:get_result_reason(MySQLRes)]),
-			    case NState of
-				#state{socket = {SockMod, RawSock}} ->
-				    SockMod:close(RawSock);
-				_ -> ok
-			    end,
+			    {SockMod, RawSock} = NState#state.socket,
+			    SockMod:close(RawSock),
 			    {stop, failed_changing_database};
 			%% ResultType: data | updated
 			{_ResultType, _MySQLRes, NState2} ->
@@ -815,7 +812,7 @@ connect(Host, Port, LogFun, Timeout) ->
 	{ok, AddrsFamilies} ->
 	    do_connect(AddrsFamilies, Port, {error, nxdomain}, Timeout);
 	{error, E} ->
-	    Reason = format_inet_error(E),
+	    Reason = inet:format_error(E),
 	    p1_mysql:log(LogFun, error,
 			 "p1_mysql_conn: Failed connecting to ~s:~p: ~s",
 			 [Host, Port, Reason]),
@@ -871,13 +868,3 @@ host_entry_to_addrs(#hostent{h_addr_list = AddrList}) ->
 get_addr_type({_, _, _, _}) -> inet;
 get_addr_type({_, _, _, _, _, _, _, _}) -> inet6;
 get_addr_type(_) -> erlang:error(badarg).
-
-format_inet_error(closed) ->
-    "connection closed";
-format_inet_error(timeout) ->
-    format_inet_error(etimedout);
-format_inet_error(Reason) ->
-    case inet:format_error(Reason) of
-	"unknown POSIX error" -> atom_to_list(Reason);
-	Txt -> Txt
-    end.
