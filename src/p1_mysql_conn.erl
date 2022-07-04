@@ -248,10 +248,6 @@ do_recv(LogFun, State, SeqNum) ->
 
 do_recv2(LogFun, #state{socket = {SockMod, Socket}, data = Last} = State, SeqNum) when is_function(LogFun);
 				      LogFun == undefined ->
-    case SockMod of
-	gen_tcp -> inet:setopts(Socket, [{active, once}]);
-	_ -> SockMod:setopts(Socket, [{active, once}])
-    end,
     receive
 	close ->
 	    %ejabberd_sql:sql_query(<<"localhost">>, <<"select 1+1;">>).
@@ -381,6 +377,17 @@ handle_info({fetch, Ref, Query, GenSrvFrom, Options}, State) ->
 	_ ->
 	    {noreply, NState}
     end;
+handle_info({T, _Socket, Data}, #state{data = Last} = State) when T == tcp; T == ssl ->
+    NewData = <<Last/binary, Data/binary>>,
+    {noreply, State#state{data = NewData}};
+handle_info({T, Socket, Reason}, #state{log_fun = LogFun} = State) when T == tcp_error; T == ssl_error ->
+    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+				"Socket ~p closed : ~p", [Socket, Reason]),
+    {stop, normal, State};
+handle_info({T, Socket}, #state{log_fun = LogFun} = State) when T == tcp_closed; T == ssl_closed ->
+    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+				"Socket ~p closed", [Socket]),
+    {stop, normal, State};
 handle_info(close, State) ->
     p1_mysql:log(State#state.log_fun, info, "p1_mysql_conn: "
 					    "Received close signal, exiting.", []),
@@ -821,7 +828,7 @@ connect(Host, Port, LogFun, Timeout) ->
     end.
 
 do_connect([{IP, Family}|AddrsFamilies], Port, _Err, Timeout) ->
-    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, {active, false}, Family], Timeout) of
+    case gen_tcp:connect(IP, Port, [binary, {packet, 0}, {active, true}, Family], Timeout) of
 	{ok, Sock} ->
 	    {ok, Sock};
 	{error, _} = Err ->
