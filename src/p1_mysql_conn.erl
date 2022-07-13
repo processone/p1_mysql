@@ -325,19 +325,19 @@ init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
 				       p1_mysql:get_result_reason(MySQLRes)]),
 			    {SockMod, RawSock} = NState#state.socket,
 			    SockMod:close(RawSock),
-			    {stop, failed_changing_database};
+			    {stop, normal};
 			%% ResultType: data | updated
 			{_ResultType, _MySQLRes, NState2} ->
 			    {ok, NState2}
 		    end;
-		{error, Reason} ->
-		    {stop, Reason}
+		{error, _Reason} ->
+		    {stop, normal}
 	    end;
 	E ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 		      "Failed connecting to ~p:~p : ~p",
 		      [Host, Port, E]),
-	    {stop, connect_failed}
+	    {stop, normal}
     end.
 
 handle_call(_Request, _From, #state{log_fun = LogFun} = State) ->
