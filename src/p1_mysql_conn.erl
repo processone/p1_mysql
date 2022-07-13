@@ -204,6 +204,7 @@ wait_fetch_result(TRef, Pid, Timeout) ->
 	    wait_fetch_result(TRef, Pid, Timeout)
     after Timeout ->
 	stop(Pid),
+	timer:kill_after(?DEFAULT_STANDALONE_TIMEOUT, Pid),
 	{error, #p1_mysql_result{error = "query timed out"}}
     end.
 
