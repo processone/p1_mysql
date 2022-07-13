@@ -246,7 +246,7 @@ do_recv(LogFun, #state{data = Last} = State, SeqNum) when Last /= <<>> ->
 do_recv(LogFun, State, SeqNum) ->
     do_recv2(LogFun, State, SeqNum).
 
-do_recv2(LogFun, #state{socket = {SockMod, Socket}, data = Last} = State, SeqNum) when is_function(LogFun);
+do_recv2(LogFun, #state{socket = {_SockMod, Socket}, data = Last} = State, SeqNum) when is_function(LogFun);
 				      LogFun == undefined ->
     receive
 	close ->
@@ -262,13 +262,13 @@ do_recv2(LogFun, #state{socket = {SockMod, Socket}, data = Last} = State, SeqNum
 		Rest ->
 		    do_recv(LogFun, State#state{data = Rest}, SeqNum)
 	    end;
-	{T, Sock, Reason} when T == tcp_error; T == ssl_error ->
+	{T, Socket, Reason} when T == tcp_error; T == ssl_error ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-					"Socket ~p closed : ~p", [Sock, Reason]),
+					"Socket ~p closed : ~p", [Socket, Reason]),
 	    {error, "p1_mysql_recv: socket was closed"};
-	{T, Sock} when T == tcp_closed; T == ssl_closed ->
+	{T, Socket} when T == tcp_closed; T == ssl_closed ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-					"Socket ~p closed", [Sock]),
+					"Socket ~p closed", [Socket]),
 	    {error, "p1_mysql_recv: socket was closed"};
 	Other ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: Other ~p~n", [Other]),
