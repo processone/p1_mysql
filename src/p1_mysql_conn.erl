@@ -184,38 +184,27 @@ squery(Pid, Query, From, Options) when is_pid(Pid),
                  (is_list(Query) or is_binary(Query)) ->
     Self = self(),
     Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
-    TRef = erlang:start_timer(Timeout, self(), timeout),
+    TRef = erlang:make_ref(),
     Pid ! {fetch, TRef, Query, From, Options},
     case From of
 	Self ->
 	    %% We are not using a mysql_dispatcher, await the response
-	    wait_fetch_result(TRef, Pid);
+	    wait_fetch_result(TRef, Pid, Timeout);
 	_ ->
 	    %% From is gen_server From, Pid will do gen_server:reply()
 	    %% when it has an answer
 	    ok
     end.
 
-wait_fetch_result(TRef, Pid) ->
+wait_fetch_result(TRef, Pid, Timeout) ->
     receive
 	{fetch_result, TRef, Pid, Result} ->
-	    case erlang:cancel_timer(TRef) of
-		false ->
-		    receive
-			{timeout, TRef, _} ->
-			    ok
-		    after 0 ->
-			    ok
-		    end;
-		_ ->
-		    ok
-	    end,
 	    Result;
 	{fetch_result, _BadRef, Pid, _Result} ->
-	    wait_fetch_result(TRef, Pid);
-	{timeout, TRef, _Info} ->
-	    stop(Pid),
-	    {error, #p1_mysql_result{error="query timed out"}}
+	    wait_fetch_result(TRef, Pid, Timeout)
+    after Timeout ->
+	stop(Pid),
+	{error, #p1_mysql_result{error = "query timed out"}}
     end.
 
 stop(Pid) ->
