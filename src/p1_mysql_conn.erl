@@ -198,6 +198,8 @@ squery(Pid, Query, From, Options) when is_pid(Pid),
 
 wait_fetch_result(TRef, Pid, Timeout) ->
     receive
+	{'EXIT', Pid, _Reason} ->
+	    {error, #p1_mysql_result{error = "connection closed"}};
 	{fetch_result, TRef, Pid, Result} ->
 	    Result;
 	{fetch_result, _BadRef, Pid, _Result} ->
