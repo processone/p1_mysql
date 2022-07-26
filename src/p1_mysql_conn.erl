@@ -262,8 +262,8 @@ do_recv2(LogFun, #state{socket = {_SockMod, Socket}, data = Last} = State, SeqNu
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 					"Socket ~p closed", [Socket]),
 	    {error, "p1_mysql_recv: socket was closed"};
-	Other ->
-	    p1_mysql:log(LogFun, error, "p1_mysql_conn: Other ~p~n", [Other]),
+	Other when not is_tuple(Other) orelse size(Other) /= 3 orelse element(1, Other) /= system ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_conn: Unknown message ~p~n", [Other]),
 	    {error, "p1_mysql_recv: socket was closed"}
     end.
 
