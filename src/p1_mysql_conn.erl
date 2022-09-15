@@ -84,7 +84,7 @@
 %% External exports (should only be used by the 'p1_mysql_auth' module)
 %%--------------------------------------------------------------------
 -export([do_recv/3
-	]).
+]).
 
 -include("p1_mysql.hrl").
 -include("p1_mysql_consts.hrl").
@@ -126,12 +126,12 @@ start(Host, Port, User, Password, Database, ConnectTimeout,
 
 start(Host, Port, User, Password, Database, ConnectTimeout,
       LogFun, SSLOpts) when is_list(Host),
-		   is_integer(Port),
-		   is_list(User),
-		   is_list(Password),
-		   is_list(Database) ->
-    gen_server:start(?MODULE,[Host, Port, User, Password, Database,
-			     ConnectTimeout, LogFun, SSLOpts],
+			    is_integer(Port),
+			    is_list(User),
+			    is_list(Password),
+			    is_list(Database) ->
+    gen_server:start(?MODULE, [Host, Port, User, Password, Database,
+			       ConnectTimeout, LogFun, SSLOpts],
 		     [{timeout, ConnectTimeout}]).
 
 start_link(Host, Port, User, Password, Database, LogFun) ->
@@ -140,14 +140,14 @@ start_link(Host, Port, User, Password, Database, LogFun) ->
 start_link(Host, Port, User, Password, Database, ConnectTimeout,
 	   LogFun) ->
     start_link(Host, Port, User, Password, Database, ConnectTimeout,
-    LogFun, []).
+	       LogFun, []).
 
 start_link(Host, Port, User, Password, Database, ConnectTimeout,
 	   LogFun, SSLOpts) when is_list(Host),
-			is_integer(Port),
-			is_list(User),
-			is_list(Password),
-			is_list(Database) ->
+				 is_integer(Port),
+				 is_list(User),
+				 is_list(Password),
+				 is_list(Database) ->
     gen_server:start_link(?MODULE, [Host, Port, User, Password, Database,
 				    ConnectTimeout, LogFun, SSLOpts],
 			  [{timeout, ConnectTimeout}]).
@@ -181,7 +181,7 @@ fetch(Pid, Query, From, Timeout) ->
     squery(Pid, Query, From, [{timeout, Timeout}]).
 
 squery(Pid, Query, From, Options) when is_pid(Pid),
-                 (is_list(Query) or is_binary(Query)) ->
+				       (is_list(Query) or is_binary(Query)) ->
     Self = self(),
     Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
     TRef = erlang:make_ref(),
@@ -239,7 +239,7 @@ do_recv(LogFun, State, SeqNum) ->
     do_recv2(LogFun, State, SeqNum).
 
 do_recv2(LogFun, #state{socket = {_SockMod, Socket}, data = Last} = State, SeqNum) when is_function(LogFun);
-				      LogFun == undefined ->
+											LogFun == undefined ->
     receive
 	close ->
 	    %ejabberd_sql:sql_query(<<"localhost">>, <<"select 1+1;">>).
@@ -311,10 +311,10 @@ init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
 		    case do_query(NState, "use " ++ Database, [{result_type, binary}]) of
 			{error, MySQLRes} ->
 			    p1_mysql:log(LogFun, error,
-				      "p1_mysql_conn: Failed changing"
-				      " to database ~p : ~p",
-				      [Database,
-				       p1_mysql:get_result_reason(MySQLRes)]),
+					 "p1_mysql_conn: Failed changing"
+					 " to database ~p : ~p",
+					 [Database,
+					  p1_mysql:get_result_reason(MySQLRes)]),
 			    {SockMod, RawSock} = NState#state.socket,
 			    SockMod:close(RawSock),
 			    {stop, normal};
@@ -327,8 +327,8 @@ init([Host, Port, User, Password, Database, ConnectTimeout, LogFun, SSLOpts]) ->
 	    end;
 	E ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-		      "Failed connecting to ~p:~p : ~p",
-		      [Host, Port, E]),
+					"Failed connecting to ~p:~p : ~p",
+			 [Host, Port, E]),
 	    {stop, normal}
     end.
 
@@ -560,33 +560,33 @@ get_query_response(LogFun, State, Version, Options) ->
 		0 ->
 		    %% No Tabular data
 		    AffectedRows = case Rest of
-			<<16#fc, Value:16/little, _/binary>> -> Value;
-			<<16#fd, Value:24/little, _/binary>> -> Value;
-			<<16#fe, Value:64/little, _/binary>> -> Value;
-			<<Value:8, _/binary>> -> Value
-		    end,
-		    {updated, #p1_mysql_result{affectedrows=AffectedRows}, NState};
+				       <<16#fc, Value:16/little, _/binary>> -> Value;
+				       <<16#fd, Value:24/little, _/binary>> -> Value;
+				       <<16#fe, Value:64/little, _/binary>> -> Value;
+				       <<Value:8, _/binary>> -> Value
+				   end,
+		    {updated, #p1_mysql_result{affectedrows = AffectedRows}, NState};
 		255 ->
-		    <<_Code:16/little, Message/binary>>  = Rest,
-		    {error, #p1_mysql_result{error=binary_to_list(Message)}};
+		    <<_Code:16/little, Message/binary>> = Rest,
+		    {error, #p1_mysql_result{error = binary_to_list(Message)}};
 		_ ->
 		    %% Tabular data received
-                    ResultType = get_option(result_type, Options, ?DEFAULT_RESULT_TYPE),
+		    ResultType = get_option(result_type, Options, ?DEFAULT_RESULT_TYPE),
 		    case get_fields(LogFun, NState, [], Version, ResultType) of
 			{ok, Fields, NState2} ->
 			    case get_rows(Fieldcount, LogFun, NState2, ResultType, []) of
 				{ok, Rows, NState3} ->
-				    {data, #p1_mysql_result{fieldinfo=Fields,
-							 rows=Rows}, NState3};
+				    {data, #p1_mysql_result{fieldinfo = Fields,
+							    rows = Rows}, NState3};
 				{error, Reason} ->
-				    {error, #p1_mysql_result{error=Reason}}
+				    {error, #p1_mysql_result{error = Reason}}
 			    end;
 			{error, Reason} ->
-			    {error, #p1_mysql_result{error=Reason}}
+			    {error, #p1_mysql_result{error = Reason}}
 		    end
 	    end;
 	{error, Reason} ->
-	    {error, #p1_mysql_result{error=Reason}}
+	    {error, #p1_mysql_result{error = Reason}}
     end.
 
 %%--------------------------------------------------------------------
@@ -613,23 +613,23 @@ get_fields(LogFun, State, Res, ?MYSQL_4_0, ResultType) ->
 		    {Table, Rest} = get_with_length(Packet),
 		    {Field, Rest2} = get_with_length(Rest),
 		    {LengthB, Rest3} = get_with_length(Rest2),
-		    LengthL = size(LengthB) * 8,
+		    LengthL = size(LengthB)*8,
 		    <<Length:LengthL/little>> = LengthB,
 		    {Type, Rest4} = get_with_length(Rest3),
 		    {_Flags, _Rest5} = get_with_length(Rest4),
-                    if ResultType == list ->
-                            This = {binary_to_list(Table),
-                                    binary_to_list(Field),
-                                    Length,
-                                    %% TODO: Check on MySQL 4.0 if types are specified
-                                    %%       using the same 4.1 formalism and could
-                                    %%       be expanded to atoms:
-                                    binary_to_list(Type)};
-                       ResultType == binary ->
-                            This = {Table, Field, Length, Type}
-                    end,
+		    if ResultType == list ->
+			This = {binary_to_list(Table),
+				binary_to_list(Field),
+				Length,
+				%% TODO: Check on MySQL 4.0 if types are specified
+				%%       using the same 4.1 formalism and could
+				%%       be expanded to atoms:
+				binary_to_list(Type)};
+			ResultType == binary ->
+			    This = {Table, Field, Length, Type}
+		    end,
 		    get_fields(LogFun, NState, [This | Res],
-                               ?MYSQL_4_0, ResultType)
+			       ?MYSQL_4_0, ResultType)
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
@@ -654,20 +654,20 @@ get_fields(LogFun, State, Res, ?MYSQL_4_1, ResultType) ->
 		    {_OrgField, Rest6} = get_with_length(Rest5),
 
 		    <<_Metadata:8/little, _Charset:16/little,
-		     Length:32/little, Type:8/little,
-		     _Flags:16/little, _Decimals:8/little,
-		     _Rest7/binary>> = Rest6,
-                    if ResultType == list ->
-                            This = {binary_to_list(Table),
-                                    binary_to_list(Field),
-                                    Length,
-                                    get_field_datatype(Type)};
-                       ResultType == binary ->
-                            This = {Table, Field, Length,
-                                    get_field_datatype(Type)}
-                    end,
+		      Length:32/little, Type:8/little,
+		      _Flags:16/little, _Decimals:8/little,
+		      _Rest7/binary>> = Rest6,
+		    if ResultType == list ->
+			This = {binary_to_list(Table),
+				binary_to_list(Field),
+				Length,
+				get_field_datatype(Type)};
+			ResultType == binary ->
+			    This = {Table, Field, Length,
+				    get_field_datatype(Type)}
+		    end,
 		    get_fields(LogFun, NState, [This | Res],
-                               ?MYSQL_4_1, ResultType)
+			       ?MYSQL_4_1, ResultType)
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
@@ -758,7 +758,7 @@ do_query(#state{socket = Sock, log_fun = LogFun, mysql_version = Version} = Stat
 %% Returns : result of gen_tcp:send/2
 %%--------------------------------------------------------------------
 do_send({SockMod, Sock}, Packet, SeqNum, _LogFun) when is_binary(Packet),
-					    is_integer(SeqNum) ->
+						       is_integer(SeqNum) ->
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
     %p1_mysql:log(_LogFun, debug, "p1_mysql_conn: send packet ~p: ~p",
     %[SeqNum, Data]),
@@ -770,22 +770,22 @@ do_send({SockMod, Sock}, Packet, SeqNum, _LogFun) when is_binary(Packet),
 %% Descrip.: Return MySQL field datatype as description string
 %% Returns : String, MySQL datatype
 %%--------------------------------------------------------------------
-get_field_datatype(0) ->   'DECIMAL';
-get_field_datatype(1) ->   'TINY';
-get_field_datatype(2) ->   'SHORT';
-get_field_datatype(3) ->   'LONG';
-get_field_datatype(4) ->   'FLOAT';
-get_field_datatype(5) ->   'DOUBLE';
-get_field_datatype(6) ->   'NULL';
-get_field_datatype(7) ->   'TIMESTAMP';
-get_field_datatype(8) ->   'LONGLONG';
-get_field_datatype(9) ->   'INT24';
-get_field_datatype(10) ->  'DATE';
-get_field_datatype(11) ->  'TIME';
-get_field_datatype(12) ->  'DATETIME';
-get_field_datatype(13) ->  'YEAR';
-get_field_datatype(14) ->  'NEWDATE';
-get_field_datatype(16) ->  'BIT';
+get_field_datatype(0) -> 'DECIMAL';
+get_field_datatype(1) -> 'TINY';
+get_field_datatype(2) -> 'SHORT';
+get_field_datatype(3) -> 'LONG';
+get_field_datatype(4) -> 'FLOAT';
+get_field_datatype(5) -> 'DOUBLE';
+get_field_datatype(6) -> 'NULL';
+get_field_datatype(7) -> 'TIMESTAMP';
+get_field_datatype(8) -> 'LONGLONG';
+get_field_datatype(9) -> 'INT24';
+get_field_datatype(10) -> 'DATE';
+get_field_datatype(11) -> 'TIME';
+get_field_datatype(12) -> 'DATETIME';
+get_field_datatype(13) -> 'YEAR';
+get_field_datatype(14) -> 'NEWDATE';
+get_field_datatype(16) -> 'BIT';
 get_field_datatype(246) -> 'DECIMAL';
 get_field_datatype(247) -> 'ENUM';
 get_field_datatype(248) -> 'SET';
@@ -830,7 +830,7 @@ connect(Host, Port, LogFun, Timeout) ->
 	    {error, Msg}
     end.
 
-do_connect([{IP, Family}|AddrsFamilies], Port, _Err, Timeout) ->
+do_connect([{IP, Family} | AddrsFamilies], Port, _Err, Timeout) ->
     case gen_tcp:connect(IP, Port, [binary, {packet, 0}, {active, true}, Family], Timeout) of
 	{ok, Sock} ->
 	    {ok, Sock};
@@ -849,7 +849,7 @@ lookup(Host, Timeout) ->
 		      [], {error, nxdomain}, Timeout)
     end.
 
-do_lookup([{Host, Family}|HostFamilies], AddrFamilies, Err, Timeout) ->
+do_lookup([{Host, Family} | HostFamilies], AddrFamilies, Err, Timeout) ->
     case inet:gethostbyname(Host, Family, Timeout) of
 	{ok, HostEntry} ->
 	    Addrs = host_entry_to_addrs(HostEntry),
