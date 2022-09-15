@@ -1,3 +1,7 @@
+# Version 1.0.20
+
+* Faster and more robust detection of reconnect/failed connections
+
 # Version 1.0.19
 
 * Switch from using Travis to Github Actions as CI
