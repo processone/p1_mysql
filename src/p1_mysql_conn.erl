@@ -414,33 +414,36 @@ code_change(_OldVsn, State, _Extra) ->
 mysql_init(State, User, Password, LogFun, SSLOpts) ->
     case do_recv(LogFun, State, undefined) of
 	{ok, Packet, InitSeqNum, NState} ->
-	    {Version, Salt, Caps, AuthPlug} = greeting(Packet, LogFun),
-	    case Caps band ?CLIENT_SSL of
-		0 ->
-		    case proplists:get_bool(ssl_required, SSLOpts) of
-			true ->
-			    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
-							"init failed - ssl required, but not available~n",
-					 []),
-			    {error, "SSL not available"};
-			false ->
-			    authenticate(NState, User, Password, LogFun,
-					 InitSeqNum, Version, Salt, Caps, AuthPlug)
-		    end;
-		_ ->
-		    case proplists:get_bool(ssl, SSLOpts) orelse proplists:get_bool(ssl_required, SSLOpts) of
-			true ->
-			    case start_ssl(NState, LogFun, InitSeqNum+1, AuthPlug) of
-				{ok, NewState} ->
-				    authenticate(NewState, User, Password, LogFun,
-						 InitSeqNum+1, Version, Salt, Caps, AuthPlug);
-				{error, Reason} ->
-				    {error, Reason}
+	    case greeting(Packet, LogFun) of
+		{ok, {Version, Salt, Caps, AuthPlug}} ->
+		    case Caps band ?CLIENT_SSL of
+			0 ->
+			    case proplists:get_bool(ssl_required, SSLOpts) of
+				true ->
+				    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
+								"init failed - ssl required, but not available~n",
+						 []),
+				    {error, "SSL not available"};
+				false ->
+				    authenticate(NState, User, Password, LogFun,
+						 InitSeqNum, Version, Salt, Caps, AuthPlug)
 			    end;
 			_ ->
-			    authenticate(NState, User, Password, LogFun,
-					 InitSeqNum, Version, Salt, Caps, AuthPlug)
-		    end
+			    case proplists:get_bool(ssl, SSLOpts) orelse proplists:get_bool(ssl_required, SSLOpts) of
+				true ->
+				    case start_ssl(NState, LogFun, InitSeqNum + 1, AuthPlug) of
+					{ok, NewState} ->
+					    authenticate(NewState, User, Password, LogFun,
+							 InitSeqNum + 1, Version, Salt, Caps, AuthPlug);
+					{error, Reason} ->
+					    {error, Reason}
+				    end;
+				_ ->
+				    authenticate(NState, User, Password, LogFun,
+						 InitSeqNum, Version, Salt, Caps, AuthPlug)
+			    end
+		    end;
+		{error, Reason} -> {error, Reason}
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
@@ -499,7 +502,7 @@ greeting(Packet, LogFun) ->
 	    p1_mysql:log(LogFun, debug, "p1_mysql_conn: greeting version ~p (protocol ~p) "
 					"salt ~p",
 			 [ServerStatusStr, Protocol, Salt]),
-	    {?MYSQL_4_0, Salt, 0, "old_pass"};
+	    {ok, {?MYSQL_4_0, Salt, 0, "old_pass"}};
 	10 ->
 	    {ServerStatusStr, Rest2} = asciz(Rest),
 	    <<_TreadID:32/little, Salt1:8/binary, _:8, Caps1:16/little,
@@ -507,21 +510,29 @@ greeting(Packet, LogFun) ->
 	      AuthPlugLen:8, _:10/binary, Rest3/binary>> = Rest2,
 	    Caps = (Caps2 bsl 16) bor Caps1,
 	    {Salt2, AuthPlug} = case {Caps band ?CLIENT_PLUGIN_AUTH, AuthPlugLen} of
-				 {0, 0} ->
-				     Len = max(13, AuthPlugLen - 8) - 1,
-				     <<S:Len/binary, _/binary>> = Rest3,
-				     {S, "mysql_native_password"};
-				 {?CLIENT_PLUGIN_AUTH, _} ->
-				     Len = max(13, AuthPlugLen - 8) - 1,
-				     <<S:Len/binary, _:8, Rest4/binary>> = Rest3,
-				     {AuthPlugName, _} = asciz(Rest4),
-				     {S, AuthPlugName}
-			     end,
+				    {0, 0} ->
+					Len = max(13, AuthPlugLen - 8) - 1,
+					<<S:Len/binary, _/binary>> = Rest3,
+					{S, "mysql_native_password"};
+				    {?CLIENT_PLUGIN_AUTH, _} ->
+					Len = max(13, AuthPlugLen - 8) - 1,
+					<<S:Len/binary, _:8, Rest4/binary>> = Rest3,
+					{AuthPlugName, _} = asciz(Rest4),
+					{S, AuthPlugName}
+				end,
 	    Salt = binary_to_list(<<Salt1/binary, Salt2/binary>>),
 	    p1_mysql:log(LogFun, debug, "p1_mysql_conn: greeting version ~p (protocol ~p) "
 					"salt ~p caps ~p serverchar ~p auth_plug: ~p",
 			 [ServerStatusStr, Protocol, Salt, Caps, CharSet, AuthPlug]),
-	    {?MYSQL_4_1, Salt, Caps, AuthPlug}
+	    {ok, {?MYSQL_4_1, Salt, Caps, AuthPlug}};
+	255 ->
+	    case Rest of
+		<<Code:16/little>> ->
+		    {error, io_lib:format("p1_mysql_conn: greetings error code ~p", [Code])};
+		<<_Code:16/little, Msg/binary>> ->
+		    {error, io_lib:format("p1_mysql_conn: greetings error: ~s", [Msg])};
+		_ -> {error, "p1_mysql_conn: greetings error"}
+	    end
     end.
 
 %% part of greeting/2
