@@ -455,7 +455,7 @@ start_ssl(#state{socket = {_, Sock}} = State, LogFun, SeqNum, AuthPlug) ->
     gen_tcp:send(Sock, Data),
     case ssl:connect(Sock, [binary, {packet, 0}]) of
 	{ok, SSLSock} ->
-	    {ok, State#state{socket = SSLSock}};
+	    {ok, State#state{socket = {ssl, SSLSock}}};
 	{error, Reason} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_conn: "
 					"ssl start failed: ~p~n",
