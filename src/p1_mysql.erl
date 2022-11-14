@@ -389,7 +389,7 @@ init([Id, Host, Port, User, Password, Database, LogFun]) ->
 					  user      = User,
 					  password  = Password,
 					  database  = Database,
-					     ssl_opts = []
+					  ssl_opts = []
 					 },
 	    try add_mysql_conn(MysqlConn, []) of
 		{ok, ConnList} ->

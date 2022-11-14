@@ -431,7 +431,7 @@ mysql_init(State, User, Password, LogFun, SSLOpts) ->
 			_ ->
 			    case proplists:get_bool(ssl, SSLOpts) orelse proplists:get_bool(ssl_required, SSLOpts) of
 				true ->
-				    case start_ssl(NState, LogFun, InitSeqNum + 1, AuthPlug) of
+				    case start_ssl(NState, SSLOpts, LogFun, InitSeqNum + 1, AuthPlug) of
 					{ok, NewState} ->
 					    authenticate(NewState, User, Password, LogFun,
 							 InitSeqNum + 1, Version, Salt, Caps, AuthPlug);
@@ -451,12 +451,14 @@ mysql_init(State, User, Password, LogFun, SSLOpts) ->
 
 %% part of mysql_init/4
 
-start_ssl(#state{socket = {_, Sock}} = State, LogFun, SeqNum, AuthPlug) ->
+start_ssl(#state{socket = {_, Sock}} = State, SSLOpts, LogFun, SeqNum, AuthPlug) ->
     Packet = p1_mysql_auth:get_auth_head(AuthPlug, ?CLIENT_SSL),
     Data = <<(size(Packet)):24/little, SeqNum:8, Packet/binary>>,
     p1_mysql:log(LogFun, debug, "p1_mysql_conn send start ssl ~p: ~p", [SeqNum, Packet]),
     gen_tcp:send(Sock, Data),
-    case ssl:connect(Sock, [binary, {packet, 0}]) of
+    {[A, B, C], _} = proplists:split(SSLOpts, [certfile, cacertfile, verify]),
+    Filtered = A ++ B ++ C,
+    case ssl:connect(Sock, [binary, {packet, 0} | Filtered]) of
 	{ok, SSLSock} ->
 	    {ok, State#state{socket = {ssl, SSLSock}}};
 	{error, Reason} ->
