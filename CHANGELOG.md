@@ -1,3 +1,7 @@
+# Version 1.0.21
+
+* Pass SSLOpts to ssl:connect
+
 # Version 1.0.20
 
 * Faster and more robust detection of reconnect/failed connections
