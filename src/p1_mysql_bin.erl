@@ -53,10 +53,24 @@
 -define(TYPE_STRING, 254).
 -define(TYPE_GEOMETRY, 255).
 
-prepare_and_execute(#state{mysql_version = Version, log_fun = LogFun, socket = Sock,
-			   prepared = Prep} = State,
-		    _Query, QueryId, Args, Types, Options) when is_map_key(QueryId, Prep) ->
-    Packet = generate_execute_stmt_packet(map_get(QueryId, Prep), Args, Types),
+prepare_and_execute(#state{prepared = Prep} = State,
+		    Query, QueryId, Args, Types, Options) ->
+    case maps:get(QueryId, Prep, none) of
+	none ->
+	    case prepare(State, Query, QueryId, Options) of
+		{ok, NState, StmtId} ->
+		    NState2 = NState#state{prepared = Prep#{QueryId => StmtId}},
+		    execute(NState2, StmtId, Args, Types, Options);
+		{error, NState, Error} ->
+		    {NState, Error}
+	    end;
+	StmtId ->
+	    execute(State, StmtId, Args, Types, Options)
+    end.
+
+execute(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State,
+	StmtId, Args, Types, Options) ->
+    Packet = generate_execute_stmt_packet(StmtId, Args, Types),
     case p1_mysql_conn:do_send(Sock, Packet, 0, LogFun) of
 	ok ->
 	    case get_execute_stmt_response(State, Version, Options) of
@@ -67,10 +81,10 @@ prepare_and_execute(#state{mysql_version = Version, log_fun = LogFun, socket = S
 	{error, Reason} ->
 	    Msg = io_lib:format("Failed sending data on socket : ~p", [Reason]),
 	    {State, {error, #p1_mysql_result{error = Msg}}}
-    end;
-prepare_and_execute(#state{mysql_version = Version, log_fun = LogFun,
-			   socket = Sock, prepared = Prep} = State,
-		    Query, QueryId, Args, Types, Options) ->
+    end.
+
+prepare(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State,
+	Query, QueryId, Options) ->
     QueryStr = if is_function(Query) -> iolist_to_binary(Query());
 		   is_list(Query) -> iolist_to_binary(Query);
 		   true -> Query
@@ -80,8 +94,8 @@ prepare_and_execute(#state{mysql_version = Version, log_fun = LogFun,
 	ok ->
 	    case get_prepare_response(State, Version, Options) of
 		{prepared, NStmtID, NState2} ->
-		    prepare_and_execute(NState2#state{prepared = Prep#{QueryId => NStmtID}},
-					Query, QueryId, Args, Types, Options);
+		    Prep = NState2#state.prepared,
+		    {ok, NState2#state{prepared = Prep#{QueryId => NStmtID}}};
 		E -> {State, E}
 	    end;
 	{error, Reason} ->
@@ -94,14 +108,14 @@ generate_execute_stmt_packet(Id, Params, ParamsType) ->
 	fun({null, _}, {AccParam, AccType, Bit, BitMap}) ->
 	    {AccParam, AccType, Bit*2, BitMap bor Bit};
 	   ({Param, Type}, {AccParam, AccType, Bit, BitMap}) ->
-	    {TypeB, ParamB} = encode_binary_value(Type, Param),
-	    {<<AccParam/binary, ParamB/binary>>,
-	     <<AccType/binary, TypeB/binary>>,
-	     Bit*2, BitMap}
+	       {TypeB, ParamB} = encode_binary_value(Type, Param),
+	       {<<AccParam/binary, ParamB/binary>>,
+		<<AccType/binary, TypeB/binary>>,
+		Bit*2, BitMap}
 	end, {<<>>, <<>>, 1, 0}, lists:zip(Params, ParamsType)),
 
     Len = length(Params),
-    LenBit = floor((Len + 7)/8)*8,
+    LenBit = trunc((Len + 7)/8)*8,
     NullBitmapBin = <<BitMap2:LenBit>>,
 
     <<16#17, Id:32/little-integer, 0, 1:32/little,
@@ -122,7 +136,7 @@ get_execute_stmt_response(State, Version, _Options) ->
 	    case get_columns_definitions(NState, Version, {[], []}) of
 		{ok, Columns, ColTypes, NState2} ->
 		    case get_resultset_rows(NState2, ColTypes,
-					    floor((ColumnsCount + 7 + 2)/8)*8, []) of
+					    trunc((ColumnsCount + 7 + 2)/8)*8, []) of
 			{ok, Rows, NState3} ->
 			    {data, #p1_mysql_result{fieldinfo = Columns, rows = Rows}, NState3};
 			{error, E} ->
@@ -218,17 +232,17 @@ decode_binary_value(?TYPE_FLOAT, <<V:32/little-float, Rest/binary>>) ->
     {V, Rest};
 decode_binary_value(?TYPE_DOUBLE, <<V:64/little-float, Rest/binary>>) ->
     {V, Rest};
-decode_binary_value(T, <<0, Rest/binary>>) when T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
+decode_binary_value(T, <<0, Rest/binary>>) when
+    T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
     {{{0, 0, 0}, {0, 0, 0, 0}}, Rest};
-decode_binary_value(T, <<4, Y:15/little, M, D, Rest/binary>>) when T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T ==
-													      ?TYPE_DATE ->
+decode_binary_value(T, <<4, Y:16/little, M, D, Rest/binary>>) when
+    T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
     {{{Y, M, D}, {0, 0, 0, 0}}, Rest};
-decode_binary_value(T, <<7, Y:16/little, M, D, H, _MM, S, Rest/binary>>) when T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME;
-									      T == ?TYPE_DATE ->
+decode_binary_value(T, <<7, Y:16/little, M, D, H, _MM, S, Rest/binary>>) when
+    T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
     {{{Y, M, D}, {H, M, S, 0}}, Rest};
-decode_binary_value(T, <<11, Y:16/little, M, D, H, _MM, S, MS:32/little, Rest/binary>>) when T == ?TYPE_TIMESTAMP; T ==
-														   ?TYPE_DATETIME;
-    T == ?TYPE_DATE ->
+decode_binary_value(T, <<11, Y:16/little, M, D, H, _MM, S, MS:32/little, Rest/binary>>)
+    when T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
     {{{Y, M, D}, {H, M, S, MS}}, Rest};
 decode_binary_value(?TYPE_LONGLONG, <<V:64/little, Rest/binary>>) ->
     {V, Rest};
