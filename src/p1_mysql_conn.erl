@@ -75,6 +75,7 @@
 	 fetch/3,
 	 fetch/4,
 	 squery/4,
+	 prepared_query/7,
 	 stop/1,
 	 init/1,
 	 handle_call/3,
@@ -83,8 +84,7 @@
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_auth' module)
 %%--------------------------------------------------------------------
--export([do_recv/3
-]).
+-export([do_recv/3, do_send/4, get_field_datatype/1]).
 
 -include("p1_mysql.hrl").
 -include("p1_mysql_consts.hrl").
@@ -186,6 +186,23 @@ squery(Pid, Query, From, Options) when is_pid(Pid),
     Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
     TRef = erlang:make_ref(),
     Pid ! {fetch, TRef, Query, From, Options},
+    case From of
+	Self ->
+	    %% We are not using a mysql_dispatcher, await the response
+	    wait_fetch_result(TRef, Pid, Timeout);
+	_ ->
+	    %% From is gen_server From, Pid will do gen_server:reply()
+	    %% when it has an answer
+	    ok
+    end.
+
+prepared_query(Pid, Query, QueryId, Args, Types, From, Options) when is_pid(Pid),
+						     (is_list(Query) or is_binary(Query) or is_function(Query)),
+						     is_list(Args), is_list(Types) ->
+    Self = self(),
+    Timeout = get_option(timeout, Options, ?DEFAULT_STANDALONE_TIMEOUT),
+    TRef = erlang:make_ref(),
+    Pid ! {prepared_query, TRef, Query, QueryId, Args, Types, From, Options},
     case From of
 	Self ->
 	    %% We are not using a mysql_dispatcher, await the response
@@ -366,6 +383,27 @@ handle_info({fetch, Ref, Query, GenSrvFrom, Options}, State) ->
 	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
 						     "Connection closed, exiting.", []),
 	    {stop, normal, State};
+	_ ->
+	    {noreply, NState}
+    end;
+handle_info({prepared_query, Ref, Query, QueryId, Args, Types, GenSrvFrom, Options}, State) ->
+    {NState, Res} = p1_mysql_bin:prepare_and_execute(State, Query, QueryId, Args, Types, Options),
+    case is_pid(GenSrvFrom) of
+	true ->
+	    %% The query was not sent using gen_server mechanisms
+	    GenSrvFrom ! {fetch_result, Ref, self(), Res};
+	false ->
+	    %% the timer is canceled in wait_fetch_result/2, but we wait on that funtion only if the query
+	    %% was not sent using the mysql gen_server. So we at least should try to cancel the timer here
+	    %% (no warranty, the gen_server can still receive timeout messages)
+	    erlang:cancel_timer(Ref),
+	    gen_server:reply(GenSrvFrom, Res)
+    end,
+    case Res of
+	{error, #p1_mysql_result{error = "p1_mysql_recv: socket was closed"}} ->
+	    p1_mysql:log(State#state.log_fun, error, "p1_mysql_conn: "
+						     "Connection closed, exiting.", []),
+	    {stop, normal, NState};
 	_ ->
 	    {noreply, NState}
     end;
