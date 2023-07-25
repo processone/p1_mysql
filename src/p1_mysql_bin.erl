@@ -57,7 +57,7 @@ prepare_and_execute(#state{prepared = Prep} = State,
 		    Query, QueryId, Args, Types, Options) ->
     case maps:get(QueryId, Prep, none) of
 	none ->
-	    case prepare(State, Query, QueryId, Options) of
+	    case prepare(State, Query, Options) of
 		{ok, NState, StmtId} ->
 		    NState2 = NState#state{prepared = Prep#{QueryId => StmtId}},
 		    execute(NState2, StmtId, Args, Types, Options);
@@ -84,7 +84,7 @@ execute(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State
     end.
 
 prepare(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State,
-	Query, QueryId, Options) ->
+	Query, Options) ->
     QueryStr = if is_function(Query) -> iolist_to_binary(Query());
 		   is_list(Query) -> iolist_to_binary(Query);
 		   true -> Query
@@ -94,8 +94,7 @@ prepare(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State
 	ok ->
 	    case get_prepare_response(State, Version, Options) of
 		{prepared, NStmtID, NState2} ->
-		    Prep = NState2#state.prepared,
-		    {ok, NState2#state{prepared = Prep#{QueryId => NStmtID}}};
+		    {ok, NState2, NStmtID};
 		E -> {State, E}
 	    end;
 	{error, Reason} ->
