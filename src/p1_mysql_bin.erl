@@ -62,7 +62,7 @@ prepare_and_execute(#state{prepared = Prep} = State,
 		    NState2 = NState#state{prepared = Prep#{QueryId => StmtId}},
 		    execute(NState2, StmtId, Args, Types, Options);
 		{error, NState, Error} ->
-		    {NState, Error}
+		    {NState, {error, Error}}
 	    end;
 	StmtId ->
 	    execute(State, StmtId, Args, Types, Options)
@@ -92,14 +92,10 @@ prepare(#state{mysql_version = Version, log_fun = LogFun, socket = Sock} = State
     Packet = generate_prepare_packet(QueryStr),
     case p1_mysql_conn:do_send(Sock, Packet, 0, LogFun) of
 	ok ->
-	    case get_prepare_response(State, Version, Options) of
-		{prepared, NStmtID, NState2} ->
-		    {ok, NState2, NStmtID};
-		E -> {State, E}
-	    end;
+	    get_prepare_response(State, Version, Options);
 	{error, Reason} ->
 	    Msg = io_lib:format("Failed sending data on socket : ~p", [Reason]),
-	    {State, {error, #p1_mysql_result{error = Msg}}}
+	    {error, State, #p1_mysql_result{error = Msg}}
     end.
 
 generate_execute_stmt_packet(Id, Params, ParamsType) ->
@@ -158,18 +154,18 @@ get_prepare_response(State, Version, _Options) ->
 		{ok, NState2} ->
 		    case receive_to_eof(NumColumns, NState2) of
 			{ok, NState3} ->
-			    {prepared, StmtID, NState3};
+			    {ok, NState3, StmtID};
 			E -> E
 		    end;
 		E -> E
 	    end;
-	{ok, <<255, _ErrCode:16/little, _StateMarker:1/binary, _State:5/binary, Rest/binary>>, _, _NState}
+	{ok, <<255, _ErrCode:16/little, _StateMarker:1/binary, _State:5/binary, Rest/binary>>, _, NState}
 	    when Version == ?MYSQL_4_1 ->
-	    {error, #p1_mysql_result{error = binary_to_list(Rest)}};
-	{ok, <<255, _ErrCode:16/little, Rest/binary>>, _, _NState} ->
-	    {error, #p1_mysql_result{error = binary_to_list(Rest)}};
+	    {error, NState, #p1_mysql_result{error = binary_to_list(Rest)}};
+	{ok, <<255, _ErrCode:16/little, Rest/binary>>, _, NState} ->
+	    {error, NState, #p1_mysql_result{error = binary_to_list(Rest)}};
 	{error, Reason} ->
-	    {error, #p1_mysql_result{error = Reason}}
+	    {error, State, #p1_mysql_result{error = Reason}}
     end.
 
 do_recv(State) ->
