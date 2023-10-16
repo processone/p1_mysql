@@ -1,3 +1,7 @@
+# Version 1.0.22
+
+* Add support for prepared statements
+
 # Version 1.0.21
 
 * Pass SSLOpts to ssl:connect
