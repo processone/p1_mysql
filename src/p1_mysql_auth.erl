@@ -88,15 +88,30 @@ do_auth(Type, State, SeqNum, User, Password,
 	Salt, Caps, LogFun)
     when Caps band ?CLIENT_PLUGIN_AUTH /= 0 andalso
 	 (Type == "mysql_native_password" orelse
-	  Type == "caching_sha2_password") ->
-    Auth = case Type of
-	       "mysql_native_password" ->
+	  Type == "caching_sha2_password" orelse
+	  Type == "sha256_password") ->
+    Auth = case {State#state.socket, Type} of
+	       {_, "mysql_native_password"} ->
 		   password_new(Password, Salt);
+	       {{ssl, _}, "sha256_password"} ->
+		   <<(iolist_to_binary(Password))/binary, 0>>;
+	       {_, "sha256_password"} ->
+		   <<1>>;
 	       _ ->
 		   password_sha2(Password, Salt)
 	   end,
     Packet2 = make_new_auth(User, Auth, none, Type),
     do_send(State, Packet2, SeqNum, LogFun),
+    check_for_auth_switch(State, SeqNum, Password, Salt, Type, LogFun);
+do_auth(Type, _State, _SeqNum, _User, _Password,
+	_Salt, _Caps, LogFun) ->
+    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_auth: "
+				"Unknown authentication method ~s", [Type]),
+    Err = lists:flatten(io_lib:format("p1_mysql_auth: Unknown "
+				      "authentication method ~s", [Type])),
+    {error, Err}.
+
+check_for_auth_switch(State, SeqNum, Password, Salt, Type, LogFun) ->
     case p1_mysql_conn:do_recv(LogFun, State, SeqNum) of
 	{ok, Packet3, SeqNum2, NState} ->
 	    case Packet3 of
@@ -109,9 +124,22 @@ do_auth(Type, State, SeqNum, User, Password,
 				 [TypeNew, SaltNew2]),
 		    do_auth_switch(TypeNew, NState, SeqNum2 + 1,
 				   Password, SaltNew2, LogFun);
+		<<1:8, PublicKey/binary>> when Type == "sha256_password" ->
+		    case calculate_rsa_password(PublicKey, Password, Salt, LogFun) of
+			{ok, RSAPassword} ->
+			    do_send(NState, RSAPassword, SeqNum2 + 1, LogFun),
+			    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2 + 1);
+			E ->
+			    E
+		    end;
 		<<1:8, 4:8>> ->
-		    do_publickey_auth(NState, SeqNum2 + 1,
-				      Password, Salt, LogFun);
+		    case get_rsa_password(NState, SeqNum2 + 1, <<2>>, Password, Salt, LogFun) of
+			{error, _} = E ->
+			    E;
+			{ok, NState2, RSAPassword, SeqNum3} ->
+			    do_send(NState2, RSAPassword, SeqNum3, LogFun),
+			    p1_mysql_conn:do_recv(LogFun, NState2, SeqNum3)
+		    end;
 		<<1:8, 3:8>> ->
 		    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2);
 		_ ->
@@ -119,21 +147,22 @@ do_auth(Type, State, SeqNum, User, Password,
 	    end;
 	{error, Reason} ->
 	    {error, Reason}
-    end;
-do_auth(Type, _State, _SeqNum, _User, _Password,
-	_Salt, _Caps, LogFun) ->
-    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_auth: "
-				"Unknown authentication method ~s", [Type]),
-    Err = lists:flatten(io_lib:format("p1_mysql_auth: Unknown "
-				      "authentication method ~s", [Type])),
-    {error, Err}.
+    end.
 
 do_auth_switch("mysql_native_password", State, SeqNum, Password, Salt, LogFun) ->
     do_send(State, password_new(Password, Salt), SeqNum, LogFun),
     p1_mysql_conn:do_recv(LogFun, State, SeqNum);
 do_auth_switch("caching_sha2_password", State, SeqNum, Password, Salt, LogFun) ->
     do_send(State, password_sha2(Password, Salt), SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
+    check_for_auth_switch(State, SeqNum, Password, Salt, "caching_sha2_password", LogFun);
+do_auth_switch("sha256_password", State, SeqNum, Password, Salt, LogFun) ->
+    case get_rsa_password(State, SeqNum, <<1>>, Password, Salt, LogFun) of
+	{error, _} = E ->
+	    E;
+	{ok, NState2, RSAPassword, SeqNum3} ->
+	    do_send(NState2, RSAPassword, SeqNum3, LogFun),
+	    p1_mysql_conn:do_recv(LogFun, NState2, SeqNum3)
+    end;
 do_auth_switch(Type, _Sock, _SeqNum, _Password, _Salt, LogFun) ->
     p1_mysql:log(LogFun, error, "p1_mysql_auth: do_auth_switch: "
 				"Unknown authentication method ~s", [Type]),
@@ -141,31 +170,17 @@ do_auth_switch(Type, _Sock, _SeqNum, _Password, _Salt, LogFun) ->
 				      "authentication method ~s", [Type])),
     {error, Err}.
 
-do_publickey_auth(#state{socket = {ssl, _}} = State, SeqNum, Password, _Salt, LogFun) ->
-    do_send(State, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum, LogFun),
-    p1_mysql_conn:do_recv(LogFun, State, SeqNum);
-do_publickey_auth(State, SeqNum, Password, Salt, LogFun) ->
-    do_send(State, <<2:8>>, SeqNum, LogFun),
+get_rsa_password(#state{socket = {ssl, _}} = State, SeqNum, _Type, Password, _Salt, _LogFun) ->
+    {ok, State, <<(iolist_to_binary(Password))/binary, 0>>, SeqNum};
+get_rsa_password(State, SeqNum, Type, Password, Salt, LogFun) ->
+    do_send(State, Type, SeqNum, LogFun),
     case p1_mysql_conn:do_recv(LogFun, State, SeqNum) of
 	{ok, <<1:8, PublicKey/binary>>, SeqNum2, NState} ->
-	    case public_key:pem_decode(PublicKey) of
-		[{'SubjectPublicKeyInfo', _, _} = KeyInfo | _] ->
-		    Key = public_key:pem_entry_decode(KeyInfo),
-		    PassB = <<(iolist_to_binary(Password))/binary, 0:8>>,
-		    PLen = size(PassB),
-		    PLenBits = PLen*8,
-		    SaltB = repeat_bin(iolist_to_binary(Salt), PLen),
-		    <<PassN:PLenBits>> = PassB,
-		    <<SaltN:PLenBits>> = SaltB,
-		    Xor = <<(PassN bxor SaltN):PLenBits>>,
-		    Encrypted = public_key:encrypt_public(Xor, Key,
-							  [{rsa_pad, rsa_pkcs1_oaep_padding}]),
-		    do_send(NState, Encrypted, SeqNum2+1, LogFun),
-		    p1_mysql_conn:do_recv(LogFun, NState, SeqNum2+1);
-		_ ->
-		    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
-						"Can't decode public key", []),
-		    {error, "p1_mysql_auth: do_publickey_auth: Can't decode public key"}
+	    case calculate_rsa_password(PublicKey, Password, Salt, LogFun) of
+		{ok, Encrypted} ->
+		    {ok, NState, Encrypted, SeqNum2 + 1};
+		E ->
+		    E
 	    end;
 	{ok, PacketUnk, _, _} ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
@@ -175,6 +190,26 @@ do_publickey_auth(State, SeqNum, Password, Salt, LogFun) ->
 	    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
 					"Error response to public key request ~p", [Err]),
 	    {error, Err}
+    end.
+
+calculate_rsa_password(PublicKey, Password, Salt, LogFun) ->
+    case public_key:pem_decode(PublicKey) of
+	[{'SubjectPublicKeyInfo', _, _} = KeyInfo | _] ->
+	    Key = public_key:pem_entry_decode(KeyInfo),
+	    PassB = <<(iolist_to_binary(Password))/binary, 0:8>>,
+	    PLen = size(PassB),
+	    PLenBits = PLen*8,
+	    SaltB = repeat_bin(iolist_to_binary(Salt), PLen),
+	    <<PassN:PLenBits>> = PassB,
+	    <<SaltN:PLenBits>> = SaltB,
+	    Xor = <<(PassN bxor SaltN):PLenBits>>,
+	    Encrypted = public_key:encrypt_public(Xor, Key,
+						  [{rsa_pad, rsa_pkcs1_oaep_padding}]),
+	    {ok, Encrypted};
+	_ ->
+	    p1_mysql:log(LogFun, error, "p1_mysql_auth: do_publickey_auth: "
+					"Can't decode public key", []),
+	    {error, "p1_mysql_auth: do_publickey_auth: Can't decode public key"}
     end.
 
 repeat_bin(Bin, Len) when size(Bin) >= Len ->
