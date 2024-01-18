@@ -18,6 +18,7 @@ jobs:
       if: matrix.otp < '20.3'
     - uses: actions/checkout@v4
       if: matrix.otp >= '20.3'
+    - run: make
     - run: rebar3 compile
     - run: rebar3 xref
     - run: rebar3 dialyzer
