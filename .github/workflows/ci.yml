@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        otp: ['19.3', '21.3', 24]
+        otp: ['19.3', '25.3', 26]
     runs-on: ubuntu-20.04
     container:
       image: erlang:${{ matrix.otp }}
@@ -20,7 +20,7 @@ jobs:
     - run: rebar3 dialyzer
     - run: rebar3 eunit -v
     - name: Send to Coveralls
-      if: matrix.otp == 24
+      if: matrix.otp == 26
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
