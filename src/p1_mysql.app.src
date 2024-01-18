@@ -25,7 +25,7 @@
   {vsn,          "1.0.22"},
   {modules,      []},
   {registered,   []},
-  {applications, [kernel, stdlib]},
+  {applications, [kernel, stdlib, public_key, ssl]},
   {mod,          {p1_mysql_app,[]}},
 
   %% hex.pm packaging:
