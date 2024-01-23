@@ -1,3 +1,7 @@
+# Version 1.0.23
+
+* Add support for sha256_password authenticaiton
+
 # Version 1.0.22
 
 * Add support for prepared statements
