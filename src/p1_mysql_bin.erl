@@ -2,6 +2,7 @@
 %%% File    : p1_mysql_bin.erl
 %%% Author  : Pawel Chmielowski <pawel@process-one.net>
 %%% Descrip.: Binary protocol and prepared statement support.
+%%% Ref.    : https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html
 
 -module(p1_mysql_bin).
 
@@ -52,6 +53,8 @@
 -define(TYPE_VAR_STRING, 253).
 -define(TYPE_STRING, 254).
 -define(TYPE_GEOMETRY, 255).
+
+-define(OFFSET, 2).
 
 prepare_and_execute(#state{prepared = Prep} = State,
 		    Query, QueryId, Args, Types, Options) ->
@@ -110,7 +113,7 @@ generate_execute_stmt_packet(Id, Params, ParamsType) ->
 	end, {<<>>, <<>>, 1, 0}, lists:zip(Params, ParamsType)),
 
     Len = length(Params),
-    LenBit = trunc((Len + 7)/8)*8,
+    LenBit = ((Len + 7) div 8) * 8,
     NullBitmapBin = <<BitMap2:LenBit>>,
 
     <<16#17, Id:32/little-integer, 0, 1:32/little,
@@ -131,7 +134,7 @@ get_execute_stmt_response(State, Version, _Options) ->
 	    case get_columns_definitions(NState, Version, {[], []}) of
 		{ok, Columns, ColTypes, NState2} ->
 		    case get_resultset_rows(NState2, ColTypes,
-					    trunc((ColumnsCount + 7 + 2)/8)*8, []) of
+					    ((ColumnsCount + 7 + ?OFFSET) div 8) * 8, []) of
 			{ok, Rows, NState3} ->
 			    {data, #p1_mysql_result{fieldinfo = Columns, rows = Rows}, NState3};
 			{error, E} ->
@@ -297,11 +300,11 @@ decode_resultset_row([], _ColumnsCount, _Null, Value, Acc) ->
     {lists:reverse(Acc), Value};
 decode_resultset_row([Type | TypeRest], Column, Null, Value, Acc) ->
     case (1 bsl Column) band Null of
-	1 ->
-	    decode_resultset_row(TypeRest, Column + 1, Null, Value, [null | Acc]);
-	_ ->
+	0 ->
 	    {Val, Rest} = decode_binary_value(Type, Value),
-	    decode_resultset_row(TypeRest, Column + 1, Null, Rest, [Val | Acc])
+	    decode_resultset_row(TypeRest, Column + 1, Null, Rest, [Val | Acc]);
+	_ ->
+	    decode_resultset_row(TypeRest, Column + 1, Null, Value, [null | Acc])
     end.
 
 get_resultset_rows(State, Columns, NullSize, Acc) ->
@@ -310,7 +313,10 @@ get_resultset_rows(State, Columns, NullSize, Acc) ->
 	    {ok, lists:reverse(Acc), NState};
 	{ok, <<0, Null:NullSize/little, Values/binary>>, _, NState} ->
 	    %io:format("ROWS: ~p ~p ~p~n", [Null, NullSize, Values]),
-	    {Row, _Rest} = decode_resultset_row(Columns, 0, Null, Values, []),
+	    % the first 2 bits of the bitmap must be ignored, this could be achieved by a
+	    % 2 bits right shift of the little endian decoded integer
+	    % (see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html)
+	    {Row, _Rest} = decode_resultset_row(Columns, 0, Null bsr ?OFFSET, Values, []),
 	    get_resultset_rows(NState, Columns, NullSize, [Row | Acc]);
 	{error, Reason} ->
 	    {error, Reason}
