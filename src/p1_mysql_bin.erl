@@ -124,7 +124,7 @@ get_execute_stmt_response(State, Version, _Options) ->
 	{ok, <<T:8, Rest/binary>>, _, NState} when T == 0; T == 254 ->
 	    {AffectedRows, _} = decode_var_int(Rest),
 	    {updated, #p1_mysql_result{affectedrows = AffectedRows}, NState};
-	{ok, <<255, _ErrCode:16/little, _StateMarker:8/binary, _State:40/binary, Rest/binary>>, _, _NState}
+	{ok, <<255, _ErrCode:16/little, $#, _State:5/binary, Rest/binary>>, _, _NState}
 	    when Version == ?MYSQL_4_1 ->
 	    {error, #p1_mysql_result{error = binary_to_list(Rest)}};
 	{ok, <<255, _ErrCode:16/little, Rest/binary>>, _, _NState} ->
@@ -162,7 +162,7 @@ get_prepare_response(State, Version, _Options) ->
 		    end;
 		E -> E
 	    end;
-	{ok, <<255, _ErrCode:16/little, _StateMarker:1/binary, _State:5/binary, Rest/binary>>, _, NState}
+	{ok, <<255, _ErrCode:16/little, $#, _State:5/binary, Rest/binary>>, _, NState}
 	    when Version == ?MYSQL_4_1 ->
 	    {error, NState, #p1_mysql_result{error = binary_to_list(Rest)}};
 	{ok, <<255, _ErrCode:16/little, Rest/binary>>, _, NState} ->
