@@ -182,22 +182,22 @@ decode_var_string(Val) ->
     <<Str:Len/binary, Rest2/binary>> = Rest,
     {Str, Rest2}.
 
-encode_var_int(Val) when Val < 252 ->
+encode_var_int(Val) when Val < 16#fb ->
     <<Val:8>>;
-encode_var_int(Val) when Val < 65536 ->
+encode_var_int(Val) when Val =< 16#ffff ->
     <<16#fc, Val:16/little>>;
-encode_var_int(Val) when Val < 16777216 ->
+encode_var_int(Val) when Val =< 16#ffffff ->
     <<16#fd, Val:24/little>>;
 encode_var_int(Val) ->
     <<16#fe, Val:64/little>>.
 
-decode_var_int(<<V, Rest/binary>>) when V < 252 ->
+decode_var_int(<<V, Rest/binary>>) when V < 16#fb ->
     {V, Rest};
-decode_var_int(<<252, V:16/little, Rest/binary>>) ->
+decode_var_int(<<16#fc, V:16/little, Rest/binary>>) ->
     {V, Rest};
-decode_var_int(<<253, V:24/little, Rest/binary>>) ->
+decode_var_int(<<16#fd, V:24/little, Rest/binary>>) ->
     {V, Rest};
-decode_var_int(<<254, V:64/little, Rest/binary>>) ->
+decode_var_int(<<16#fe, V:64/little, Rest/binary>>) ->
     {V, Rest}.
 
 encode_binary_value(string, Value) ->
