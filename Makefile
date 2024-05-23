@@ -4,9 +4,11 @@ all: src
 
 src:
 	$(REBAR) compile
-	$(REBAR) xref
 
 clean:
 	$(REBAR) clean
+
+xref: all
+	$(REBAR) xref
 
 .PHONY: clean src
