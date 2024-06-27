@@ -1,3 +1,9 @@
+# Version 1.0.24
+
+* Add support for unix domain sockets
+* Make compatible with OTP27
+* Fix couple issues in binary protocol decoding
+
 # Version 1.0.23
 
 * Add support for sha256_password authenticaiton
