@@ -302,7 +302,7 @@ connect(Id, Host, Port, User, Password, Database, Reconnect) ->
     connect(Id, Host, Port, User, Password, Database, Reconnect, []).
 connect(Id, Host, Port, User, Password, Database, Reconnect, SSLOpts) ->
     {ok, LogFun} = gen_server:call(?SERVER, get_logfun),
-    case p1_mysql_conn:start(Host, Port, User, Password, Database, LogFun, SSLOpts) of
+    case p1_mysql_conn:start(Host, Port, User, Password, Database,?CONNECT_TIMEOUT, LogFun, SSLOpts) of
 	{ok, ConnPid} ->
 	    MysqlConn =
 		case Reconnect of
