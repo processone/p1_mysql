@@ -169,7 +169,7 @@ start_link(Id, Host, User, Password, Database, LogFun) when is_list(Host), is_li
 
 start_link(Id, Host, Port, User, Password, Database, LogFun) when is_list(Host), is_integer(Port), is_list(User),
 								  is_list(Password), is_list(Database) ->
-    crypto:start(),
+    application:start(crypto),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [Id, Host, Port, User, Password, Database, LogFun], []).
 
 stop() ->
