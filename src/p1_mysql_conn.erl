@@ -177,6 +177,8 @@ start_link(Host, Port, User, Password, Database, ConnectTimeout,
 
 fetch(Pid, Query, From) ->
     squery(Pid, Query, From, []).
+fetch(Pid, Query, From, Options) when is_list(Options) ->
+    squery(Pid, Query, From, Options);
 fetch(Pid, Query, From, Timeout) ->
     squery(Pid, Query, From, [{timeout, Timeout}]).
 
