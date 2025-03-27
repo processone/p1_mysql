@@ -1,3 +1,7 @@
+# Version 1.0.26
+
+* Make compatible with R28
+
 # Version 1.0.24
 
 * Add support for unix domain sockets
