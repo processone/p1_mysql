@@ -236,12 +236,12 @@ decode_binary_value(T, <<0, Rest/binary>>) when
 decode_binary_value(T, <<4, Y:16/little, M, D, Rest/binary>>) when
     T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
     {{{Y, M, D}, {0, 0, 0, 0}}, Rest};
-decode_binary_value(T, <<7, Y:16/little, M, D, H, _MM, S, Rest/binary>>) when
+decode_binary_value(T, <<7, Y:16/little, M, D, H, MM, S, Rest/binary>>) when
     T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
-    {{{Y, M, D}, {H, M, S, 0}}, Rest};
-decode_binary_value(T, <<11, Y:16/little, M, D, H, _MM, S, MS:32/little, Rest/binary>>)
+    {{{Y, M, D}, {H, MM, S, 0}}, Rest};
+decode_binary_value(T, <<11, Y:16/little, M, D, H, MM, S, MS:32/little, Rest/binary>>)
     when T == ?TYPE_TIMESTAMP; T == ?TYPE_DATETIME; T == ?TYPE_DATE ->
-    {{{Y, M, D}, {H, M, S, MS}}, Rest};
+    {{{Y, M, D}, {H, MM, S, MS}}, Rest};
 decode_binary_value(?TYPE_LONGLONG, <<V:64/little, Rest/binary>>) ->
     {V, Rest};
 decode_binary_value(?TYPE_TIME, <<0, Rest/binary>>) ->
