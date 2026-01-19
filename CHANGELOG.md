@@ -1,3 +1,7 @@
+# Version 1.0.27
+
+* Fix decoding of minute value in binary timestamp types
+
 # Version 1.0.26
 
 * Make compatible with R28
