@@ -1,3 +1,9 @@
+# Version 1.0.28
+
+* Fix issue with authentication with servers that initially wanted
+  to use `mysql_native_password` plugin but to needed switch to different
+  plugin when using SSL encrypted connection
+
 # Version 1.0.27
 
 * Fix decoding of minute value in binary timestamp types
