@@ -16,7 +16,7 @@
 %%--------------------------------------------------------------------
 %% External exports (should only be used by the 'p1_mysql_conn' module)
 %%--------------------------------------------------------------------
--export([do_auth/8, password_sha2/2, get_auth_head/2]).
+-export([do_auth/8, password_sha2/2, get_auth_head/3]).
 
 -include("p1_mysql_consts.hrl").
 -include("p1_mysql_state.hrl").
@@ -38,11 +38,11 @@
 %% External functions
 %%====================================================================
 
-get_auth_head("old_auth", ExtraCaps) ->
+get_auth_head("old_auth", _, ExtraCaps) ->
     make_auth_head(ExtraCaps);
-get_auth_head("mysql_native_password", ExtraCaps) ->
+get_auth_head("mysql_native_password", false, ExtraCaps) ->
     make_new_auth_head(none, "", ExtraCaps);
-get_auth_head(Type, ExtraCaps) ->
+get_auth_head(Type, _, ExtraCaps) ->
     make_new_auth_head(none, Type, ExtraCaps).
 
 %%--------------------------------------------------------------------
